@@ -8,7 +8,6 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   deriveTimelineEntries,
-  deriveVisibleWorkTurnId,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasToolActivityForTurn,
@@ -226,68 +225,6 @@ describe("derivePendingUserInputs", () => {
   });
 });
 
-describe("deriveVisibleWorkTurnId", () => {
-  it("keeps showing the pending approval turn when the latest turn has not logged work yet", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "approval-open",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        kind: "approval.requested",
-        summary: "Command approval requested",
-        tone: "approval",
-        turnId: "turn-2",
-        payload: {
-          requestId: "req-approval",
-          requestKind: "command",
-          detail: "bun run lint",
-        },
-      }),
-    ];
-
-    expect(
-      deriveVisibleWorkTurnId({
-        activities,
-        latestTurnId: TurnId.makeUnsafe("turn-3"),
-        session: { orchestrationStatus: "running" },
-      }),
-    ).toBe("turn-2");
-  });
-
-  it("falls back to the latest visible work turn while a newer turn is still waiting on output", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "approval-resolved",
-        createdAt: "2026-02-23T00:00:02.000Z",
-        kind: "approval.resolved",
-        summary: "Approval resolved",
-        tone: "approval",
-        turnId: "turn-2",
-        payload: {
-          requestId: "req-approval",
-          requestKind: "command",
-          decision: "acceptForSession",
-        },
-      }),
-      makeActivity({
-        id: "tool-complete",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        kind: "tool.completed",
-        summary: "bash complete",
-        tone: "tool",
-        turnId: "turn-2",
-      }),
-    ];
-
-    expect(
-      deriveVisibleWorkTurnId({
-        activities,
-        latestTurnId: TurnId.makeUnsafe("turn-3"),
-        session: { orchestrationStatus: "running" },
-      }),
-    ).toBe("turn-2");
-  });
-});
-
 describe("deriveActivePlanState", () => {
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [
@@ -496,6 +433,36 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities, undefined);
     expect(entries.map((entry) => entry.id)).toEqual(["first", "second"]);
+  });
+
+  it("keeps work from multiple provider turns after the latest user message", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "older-turn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        summary: "Old work",
+        kind: "tool.completed",
+        turnId: "turn-1",
+      }),
+      makeActivity({
+        id: "turn-2-tool",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        summary: "apply_patch complete",
+        kind: "tool.completed",
+        turnId: "turn-2",
+      }),
+      makeActivity({
+        id: "turn-3-approval",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        summary: "Approval resolved",
+        kind: "approval.resolved",
+        tone: "approval",
+        turnId: "turn-3",
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined, "2026-02-23T00:00:02.000Z");
+    expect(entries.map((entry) => entry.id)).toEqual(["turn-2-tool", "turn-3-approval"]);
   });
 
   it("extracts command text for command tool activities", () => {

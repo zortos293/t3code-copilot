@@ -71,7 +71,6 @@ import {
   deriveTimelineEntries,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
-  deriveVisibleWorkTurnId,
   findLatestProposedPlan,
   type PendingApproval,
   type PendingUserInput,
@@ -953,6 +952,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
+  const serverMessages = activeThread?.messages;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -967,20 +967,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
   );
-  const visibleWorkTurnId = useMemo(
+  const latestUserMessageCreatedAt = useMemo(
     () =>
-      deriveVisibleWorkTurnId({
-        activities: threadActivities,
-        latestTurnId: activeLatestTurn?.turnId ?? undefined,
-        session: activeThread?.session ?? null,
-        pendingApprovals,
-        pendingUserInputs,
-      }),
-    [activeLatestTurn?.turnId, activeThread?.session, pendingApprovals, pendingUserInputs, threadActivities],
+      [...(serverMessages ?? [])].toReversed().find((message) => message.role === "user")?.createdAt,
+    [serverMessages],
   );
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, visibleWorkTurnId),
-    [threadActivities, visibleWorkTurnId],
+    () => deriveWorkLogEntries(threadActivities, undefined, latestUserMessageCreatedAt),
+    [latestUserMessageCreatedAt, threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
@@ -1123,7 +1117,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       delete attachmentPreviewHandoffTimeoutByMessageIdRef.current[messageId];
     }, ATTACHMENT_PREVIEW_HANDOFF_TTL_MS);
   }, []);
-  const serverMessages = activeThread?.messages;
   const timelineMessages = useMemo(() => {
     const messages = serverMessages ?? [];
     const serverMessagesWithPreviewHandoff =

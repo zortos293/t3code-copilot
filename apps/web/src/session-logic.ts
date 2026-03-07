@@ -317,55 +317,6 @@ function isVisibleWorkActivity(activity: OrchestrationThreadActivity): boolean {
   return true;
 }
 
-export function deriveVisibleWorkTurnId(input: {
-  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
-  readonly latestTurnId: TurnId | undefined;
-  readonly session: Pick<ThreadSession, "orchestrationStatus"> | null;
-  readonly pendingApprovals?: ReadonlyArray<PendingApproval>;
-  readonly pendingUserInputs?: ReadonlyArray<PendingUserInput>;
-}): TurnId | undefined {
-  const {
-    activities,
-    latestTurnId,
-    session,
-    pendingApprovals = derivePendingApprovals(activities),
-    pendingUserInputs = derivePendingUserInputs(activities),
-  } = input;
-
-  const latestTurnHasVisibleWork =
-    latestTurnId !== undefined &&
-    activities.some((activity) => activity.turnId === latestTurnId && isVisibleWorkActivity(activity));
-  if (latestTurnHasVisibleWork) {
-    return latestTurnId;
-  }
-
-  const newestPendingApprovalTurnId = [...pendingApprovals]
-    .toReversed()
-    .find((approval) => approval.turnId !== null)?.turnId;
-  if (newestPendingApprovalTurnId) {
-    return newestPendingApprovalTurnId;
-  }
-
-  const newestPendingUserInputTurnId = [...pendingUserInputs]
-    .toReversed()
-    .find((userInput) => userInput.turnId !== null)?.turnId;
-  if (newestPendingUserInputTurnId) {
-    return newestPendingUserInputTurnId;
-  }
-
-  if (session?.orchestrationStatus === "running") {
-    const latestVisibleWorkTurnId = [...activities]
-      .toSorted(compareActivitiesByOrder)
-      .toReversed()
-      .find((activity) => activity.turnId !== null && isVisibleWorkActivity(activity))?.turnId;
-    if (latestVisibleWorkTurnId) {
-      return latestVisibleWorkTurnId;
-    }
-  }
-
-  return latestTurnId;
-}
-
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
@@ -472,10 +423,12 @@ export function findLatestProposedPlan(
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
+  sinceCreatedAt?: string,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
     .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) => (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true))
     .filter(isVisibleWorkActivity)
     .map((activity) => {
       const payload =
