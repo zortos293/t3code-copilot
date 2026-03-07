@@ -5622,7 +5622,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           ) : null}
           <span className="truncate">{selectedModelLabel}</span>
           {selectedCopilotModel?.billingMultiplier != null ? (
-            <span className="rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+            <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
               {formatCopilotBillingMultiplier(selectedCopilotModel.billingMultiplier)}
             </span>
           ) : null}
@@ -5685,16 +5685,18 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                           value={modelOption.slug}
                           onClick={() => setIsMenuOpen(false)}
                         >
-                          {option.value === "codex" &&
-                          shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
-                            <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
-                          ) : null}
-                          <span className="truncate">{modelOption.name}</span>
-                          {copilotModel?.billingMultiplier != null ? (
-                            <span className="ms-auto text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-                              {formatCopilotBillingMultiplier(copilotModel.billingMultiplier)}
-                            </span>
-                          ) : null}
+                          <span className="flex min-w-0 items-center gap-2">
+                            {option.value === "codex" &&
+                            shouldShowFastTierIcon(modelOption.slug, props.serviceTierSetting) ? (
+                              <ZapIcon className="size-3.5 shrink-0 text-amber-500" />
+                            ) : null}
+                            <span className="truncate">{modelOption.name}</span>
+                            {copilotModel?.billingMultiplier != null ? (
+                              <span className="ms-auto shrink-0 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+                                {formatCopilotBillingMultiplier(copilotModel.billingMultiplier)}
+                              </span>
+                            ) : null}
+                          </span>
                         </MenuRadioItem>
                       );
                     })}
