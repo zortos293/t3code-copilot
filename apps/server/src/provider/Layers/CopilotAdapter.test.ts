@@ -135,10 +135,10 @@ layer("CopilotAdapterLive startup", (it) => {
         runtimeMode: "approval-required",
       });
 
-      yield* Stream.runCollect(Stream.take(adapter.streamEvents, 8)).pipe(Effect.asVoid);
+      yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(Effect.asVoid);
 
       const runtimeEventsFiber = yield* Stream.runCollect(
-        Stream.take(adapter.streamEvents, 8),
+        Stream.take(adapter.streamEvents, 7),
       ).pipe(Effect.forkChild);
 
       const turn = yield* adapter.sendTurn({
@@ -232,6 +232,185 @@ layer("CopilotAdapterLive startup", (it) => {
       assert.equal(
         toolCompleted?.type === "item.completed" ? toolCompleted.payload.title : undefined,
         "bash",
+      );
+    }),
+  );
+
+  it.effect("waits for assistant usage before marking a Copilot turn complete", () =>
+    Effect.gen(function* () {
+      fakeClient.connected = false;
+      fakeClient.callLog.length = 0;
+      fakeClient.lastCreateSessionConfig = undefined;
+      fakeClient.session.handler = null;
+
+      const adapter = yield* CopilotAdapter;
+      yield* adapter.startSession({
+        provider: "copilot",
+        threadId: asThreadId("thread-copilot-usage-complete"),
+        model: "gpt-5.4",
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(Effect.asVoid);
+
+      const runtimeEventsFiber = yield* Stream.runCollect(
+        Stream.take(adapter.streamEvents, 7),
+      ).pipe(Effect.forkChild);
+
+      const turn = yield* adapter.sendTurn({
+        threadId: asThreadId("thread-copilot-usage-complete"),
+        input: "ship it",
+      });
+
+      fakeClient.session.emit({
+        id: "evt-turn-start-usage",
+        type: "assistant.turn_start",
+        timestamp: "2026-03-08T10:00:00.000Z",
+        data: {
+          turnId: "provider-turn-usage-1",
+        },
+      });
+
+      fakeClient.session.emit({
+        id: "evt-assistant-message-usage",
+        type: "assistant.message",
+        timestamp: "2026-03-08T10:00:01.000Z",
+        data: {
+          messageId: "msg-usage-1",
+          content: "Almost done",
+        },
+      });
+
+      fakeClient.session.emit({
+        id: "evt-turn-end-usage",
+        type: "assistant.turn_end",
+        timestamp: "2026-03-08T10:00:02.000Z",
+        data: {
+          turnId: "provider-turn-usage-1",
+        },
+      });
+
+      const sessionsAfterTurnEnd = yield* adapter.listSessions();
+      const currentSession = sessionsAfterTurnEnd.find(
+        (session) => session.threadId === "thread-copilot-usage-complete",
+      );
+      assert.equal(currentSession?.status, "running");
+      assert.equal(currentSession?.activeTurnId, turn.turnId);
+
+      fakeClient.session.emit({
+        id: "evt-usage",
+        type: "assistant.usage",
+        timestamp: "2026-03-08T10:00:03.000Z",
+        data: {
+          promptTokens: 10,
+          completionTokens: 12,
+          totalTokens: 22,
+          model: "gpt-5.4",
+        },
+      });
+
+      fakeClient.session.emit({
+        id: "evt-session-idle-usage",
+        type: "session.idle",
+        timestamp: "2026-03-08T10:00:04.000Z",
+        data: {},
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(runtimeEventsFiber).pipe(
+          Effect.map((chunk): ReadonlyArray<ProviderRuntimeEvent> => Array.from(chunk)),
+        ),
+      );
+      const turnCompletedEvents = events.filter((event) => event.type === "turn.completed");
+
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(turnCompletedEvents[0]?.turnId, turn.turnId);
+      assert.equal(turnCompletedEvents[0]?.providerRefs?.providerTurnId, "provider-turn-usage-1");
+      assert.equal(
+        turnCompletedEvents[0]?.type === "turn.completed"
+          ? turnCompletedEvents[0].payload.modelUsage?.model
+          : undefined,
+        "gpt-5.4",
+      );
+    }),
+  );
+
+  it.effect("falls back to session idle to complete a Copilot turn when usage never arrives", () =>
+    Effect.gen(function* () {
+      fakeClient.connected = false;
+      fakeClient.callLog.length = 0;
+      fakeClient.lastCreateSessionConfig = undefined;
+      fakeClient.session.handler = null;
+
+      const adapter = yield* CopilotAdapter;
+      yield* adapter.startSession({
+        provider: "copilot",
+        threadId: asThreadId("thread-copilot-idle-complete"),
+        model: "gpt-5.4",
+        runtimeMode: "full-access",
+      });
+
+      yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(Effect.asVoid);
+
+      const runtimeEventsFiber = yield* Stream.runCollect(
+        Stream.take(adapter.streamEvents, 6),
+      ).pipe(Effect.forkChild);
+
+      const turn = yield* adapter.sendTurn({
+        threadId: asThreadId("thread-copilot-idle-complete"),
+        input: "wrap up",
+      });
+
+      fakeClient.session.emit({
+        id: "evt-turn-start-idle",
+        type: "assistant.turn_start",
+        timestamp: "2026-03-08T10:01:00.000Z",
+        data: {
+          turnId: "provider-turn-idle-1",
+        },
+      });
+
+      fakeClient.session.emit({
+        id: "evt-assistant-message-idle",
+        type: "assistant.message",
+        timestamp: "2026-03-08T10:01:01.000Z",
+        data: {
+          messageId: "msg-idle-1",
+          content: "Done",
+        },
+      });
+
+      fakeClient.session.emit({
+        id: "evt-turn-end-idle",
+        type: "assistant.turn_end",
+        timestamp: "2026-03-08T10:01:02.000Z",
+        data: {
+          turnId: "provider-turn-idle-1",
+        },
+      });
+
+      fakeClient.session.emit({
+        id: "evt-session-idle",
+        type: "session.idle",
+        timestamp: "2026-03-08T10:01:03.000Z",
+        data: {},
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(runtimeEventsFiber).pipe(
+          Effect.map((chunk): ReadonlyArray<ProviderRuntimeEvent> => Array.from(chunk)),
+        ),
+      );
+      const turnCompletedEvents = events.filter((event) => event.type === "turn.completed");
+
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(turnCompletedEvents[0]?.turnId, turn.turnId);
+      assert.equal(turnCompletedEvents[0]?.providerRefs?.providerTurnId, "provider-turn-idle-1");
+      assert.equal(
+        turnCompletedEvents[0]?.type === "turn.completed"
+          ? turnCompletedEvents[0].payload.usage
+          : undefined,
+        undefined,
       );
     }),
   );
