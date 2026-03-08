@@ -993,6 +993,10 @@ const make = Effect.gen(function* () {
       if (assistantCompletion) {
         const assistantMessageId = assistantCompletion.messageId;
         const turnId = toTurnId(event.turnId);
+        const existingAssistantMessage = thread.messages.find((entry) => entry.id === assistantMessageId);
+        const shouldApplyFallbackCompletionText =
+          !existingAssistantMessage ||
+          existingAssistantMessage.text.length === 0;
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
@@ -1008,7 +1012,7 @@ const make = Effect.gen(function* () {
           ...(existingAssistantMessageById.has(assistantMessageId)
             ? { existingMessage: existingAssistantMessageById.get(assistantMessageId)! }
             : {}),
-          ...(assistantCompletion.fallbackText !== undefined
+          ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
             ? { fallbackText: assistantCompletion.fallbackText }
             : {}),
         });
