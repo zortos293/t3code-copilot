@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
+import { ApprovalRequestId, type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
 import type { CopilotClient } from "@github/copilot-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
@@ -14,6 +14,7 @@ const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 
 type FakeSessionConfig = {
   readonly onPermissionRequest?: (...args: ReadonlyArray<unknown>) => Promise<unknown>;
+  readonly onUserInputRequest?: (...args: ReadonlyArray<unknown>) => Promise<unknown>;
 };
 
 class FakeCopilotSession {
@@ -412,6 +413,72 @@ layer("CopilotAdapterLive startup", (it) => {
           : undefined,
         undefined,
       );
+    }),
+  );
+
+  it.effect("emits provider-agnostic user-input question headers", () =>
+    Effect.gen(function* () {
+      fakeClient.connected = false;
+      fakeClient.callLog.length = 0;
+      fakeClient.lastCreateSessionConfig = undefined;
+      fakeClient.session.handler = null;
+
+      const adapter = yield* CopilotAdapter;
+      yield* adapter.startSession({
+        provider: "copilot",
+        threadId: asThreadId("thread-copilot-user-input"),
+        model: "gpt-5.4",
+        runtimeMode: "approval-required",
+      });
+
+      yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(Effect.asVoid);
+
+      const onUserInputRequest = (fakeClient.lastCreateSessionConfig as
+        | FakeSessionConfig
+        | undefined)?.onUserInputRequest;
+      assert.ok(onUserInputRequest);
+
+      const runtimeEventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 1)).pipe(
+        Effect.forkChild,
+      );
+
+      const responsePromise = Effect.promise(() =>
+        onUserInputRequest({
+          question: "Which mode should be used?",
+          choices: ["safe", "fast"],
+        }) as Promise<unknown>,
+      );
+
+      const [event] = Array.from(
+        yield* Fiber.join(runtimeEventsFiber).pipe(
+          Effect.map((chunk): ReadonlyArray<ProviderRuntimeEvent> => Array.from(chunk)),
+        ),
+      );
+
+      assert.equal(event?.type, "user-input.requested");
+      if (event?.type !== "user-input.requested") {
+        return;
+      }
+
+      assert.equal(event.payload.questions[0]?.header, "Question");
+      assert.equal(event.payload.questions[0]?.question, "Which mode should be used?");
+      assert.equal(event.payload.questions[0]?.id, "answer");
+
+      const requestId = event.requestId;
+      assert.ok(requestId);
+      yield* adapter.respondToUserInput(
+        asThreadId("thread-copilot-user-input"),
+        ApprovalRequestId.makeUnsafe(requestId),
+        {
+        answer: "safe",
+        },
+      );
+
+      const resolved = yield* responsePromise;
+      assert.deepStrictEqual(resolved, {
+        answer: "safe",
+        wasFreeform: false,
+      });
     }),
   );
 

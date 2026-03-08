@@ -43,6 +43,7 @@ import type {
 
 const PROVIDER = "copilot" as const;
 const USER_INPUT_QUESTION_ID = "answer";
+const USER_INPUT_QUESTION_HEADER = "Question";
 
 export interface CopilotAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -905,7 +906,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 questions: [
                   {
                     id: USER_INPUT_QUESTION_ID,
-                    header: "GitHub Copilot",
+                    header: USER_INPUT_QUESTION_HEADER,
                     question: request.question,
                     options: (request.choices ?? []).map((choice: string) => ({
                       label: choice,
