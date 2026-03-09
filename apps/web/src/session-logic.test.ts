@@ -481,6 +481,42 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
+  it("keeps tool item types for icon rendering", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "web-search-tool",
+        kind: "tool.completed",
+        summary: "Web search complete",
+        payload: {
+          itemType: "web_search",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.activityKind).toBe("tool.completed");
+    expect(entry?.itemType).toBe("web_search");
+  });
+
+  it("maps request kinds for approval work log entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "approval-entry",
+        kind: "approval.requested",
+        summary: "File-read approval requested",
+        tone: "approval",
+        payload: {
+          requestType: "file_read_approval",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.activityKind).toBe("approval.requested");
+    expect(entry?.requestKind).toBe("file-read");
+    expect(entry?.tone).toBe("info");
+  });
+
   it("keeps multi-turn tool activity since the latest user message", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -544,6 +580,7 @@ describe("deriveTimelineEntries", () => {
           createdAt: "2026-02-23T00:00:03.000Z",
           label: "Ran tests",
           tone: "tool",
+          activityKind: "tool.completed",
         },
       ],
     );
