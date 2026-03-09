@@ -263,7 +263,6 @@ jobs:
             --target "${{ needs.preflight.outputs.ref }}"
             --title "T3 Code v${{ needs.preflight.outputs.version }}"
             --generate-notes
-            --verify-tag
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
