@@ -75,7 +75,6 @@ describe("derivePendingApprovals", () => {
         requestId: "req-1",
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: null,
         detail: "bun run lint",
       },
     ]);
@@ -102,7 +101,6 @@ describe("derivePendingApprovals", () => {
         requestId: "req-request-type",
         requestKind: "command",
         createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: null,
         detail: "pwd",
       },
     ]);
@@ -206,7 +204,6 @@ describe("derivePendingUserInputs", () => {
       {
         requestId: "req-user-input-1",
         createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: null,
         questions: [
           {
             id: "sandbox_mode",
@@ -435,36 +432,6 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["first", "second"]);
   });
 
-  it("keeps work from multiple provider turns after the latest user message", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "older-turn",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        summary: "Old work",
-        kind: "tool.completed",
-        turnId: "turn-1",
-      }),
-      makeActivity({
-        id: "turn-2-tool",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        summary: "apply_patch complete",
-        kind: "tool.completed",
-        turnId: "turn-2",
-      }),
-      makeActivity({
-        id: "turn-3-approval",
-        createdAt: "2026-02-23T00:00:04.000Z",
-        summary: "Approval resolved",
-        kind: "approval.resolved",
-        tone: "approval",
-        turnId: "turn-3",
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities, undefined, "2026-02-23T00:00:02.000Z");
-    expect(entries.map((entry) => entry.id)).toEqual(["turn-2-tool", "turn-3-approval"]);
-  });
-
   it("extracts command text for command tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -678,7 +645,6 @@ describe("PROVIDER_OPTIONS", () => {
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
-      { value: "copilot", label: "GitHub Copilot", available: true },
       { value: "claudeCode", label: "Claude Code", available: false },
       { value: "cursor", label: "Cursor", available: false },
     ]);

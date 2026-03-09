@@ -37,14 +37,12 @@ export interface PendingApproval {
   requestId: ApprovalRequestId;
   requestKind: "command" | "file-read" | "file-change";
   createdAt: string;
-  turnId: TurnId | null;
   detail?: string;
 }
 
 export interface PendingUserInput {
   requestId: ApprovalRequestId;
   createdAt: string;
-  turnId: TurnId | null;
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
@@ -189,7 +187,6 @@ export function derivePendingApprovals(
         requestId,
         requestKind,
         createdAt: activity.createdAt,
-        turnId: activity.turnId,
         ...(detail ? { detail } : {}),
       });
       continue;
@@ -288,7 +285,6 @@ export function derivePendingUserInputs(
       openByRequestId.set(requestId, {
         requestId,
         createdAt: activity.createdAt,
-        turnId: activity.turnId,
         questions,
       });
       continue;
@@ -302,19 +298,6 @@ export function derivePendingUserInputs(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
-}
-
-function isVisibleWorkActivity(activity: OrchestrationThreadActivity): boolean {
-  if (activity.kind === "tool.started") {
-    return false;
-  }
-  if (activity.kind === "task.started" || activity.kind === "task.completed") {
-    return false;
-  }
-  if (activity.summary === "Checkpoint captured") {
-    return false;
-  }
-  return true;
 }
 
 export function deriveActivePlanState(
@@ -427,9 +410,11 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId || activity.turnId === null : true))
     .filter((activity) => (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true))
-    .filter(isVisibleWorkActivity)
+    .filter((activity) => activity.kind !== "tool.started")
+    .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
+    .filter((activity) => activity.summary !== "Checkpoint captured")
     .map((activity) => {
       const payload =
         activity.payload && typeof activity.payload === "object"

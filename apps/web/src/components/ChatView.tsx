@@ -18,8 +18,6 @@ import {
   type ServerProviderQuotaSnapshot,
   type ServerProviderStatus,
   type ProviderKind,
-  type ProviderModelOptions,
-  type ProviderStartOptions,
   type ThreadId,
   type TurnId,
   OrchestrationThreadActivity,
@@ -80,6 +78,7 @@ import {
   type ProviderPickerKind,
   PROVIDER_OPTIONS,
   deriveWorkLogEntries,
+  hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
   formatTimestamp,
@@ -993,30 +992,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return undefined;
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
-  const selectedProviderOptionsForDispatch = useMemo(() => {
-    if (selectedProvider === "codex") {
-      const codexOptions = {
-        ...(settings.codexBinaryPath.trim().length > 0 ? { binaryPath: settings.codexBinaryPath.trim() } : {}),
-        ...(settings.codexHomePath.trim().length > 0 ? { homePath: settings.codexHomePath.trim() } : {}),
-      };
-      return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
-    }
-
-    const normalizedCopilotCliPath = normalizeCopilotCliPathOverride(settings.copilotCliPath);
-    const copilotOptions = {
-      ...(normalizedCopilotCliPath ? { cliPath: normalizedCopilotCliPath } : {}),
-      ...(settings.copilotConfigDir.trim().length > 0
-        ? { configDir: settings.copilotConfigDir.trim() }
-        : {}),
-    };
-    return Object.keys(copilotOptions).length > 0 ? { copilot: copilotOptions } : undefined;
-  }, [
-    selectedProvider,
-    settings.codexBinaryPath,
-    settings.codexHomePath,
-    settings.copilotCliPath,
-    settings.copilotConfigDir,
-  ]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () => getCustomModelOptionsByProvider(settings, builtInModelOptionsByProvider.copilot),
@@ -1071,8 +1046,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [serverMessages],
   );
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, undefined, latestUserMessageCreatedAt),
-    [latestUserMessageCreatedAt, threadActivities],
+    () =>
+      deriveWorkLogEntries(
+        threadActivities,
+        activeLatestTurn?.turnId ?? undefined,
+        latestUserMessageCreatedAt,
+      ),
+    [activeLatestTurn?.turnId, latestUserMessageCreatedAt, threadActivities],
+  );
+  const latestTurnHasToolActivity = useMemo(
+    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
+    [activeLatestTurn?.turnId, threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingDraftAnswers = useMemo(
@@ -1312,11 +1296,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
+  const completionSummary = useMemo(() => {
+    if (!latestTurnSettled) return null;
+    if (!activeLatestTurn?.startedAt) return null;
+    if (!activeLatestTurn.completedAt) return null;
+    if (!latestTurnHasToolActivity) return null;
+
+    const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
+    return elapsed ? `Worked for ${elapsed}` : null;
+  }, [
+    activeLatestTurn?.completedAt,
+    activeLatestTurn?.startedAt,
+    latestTurnHasToolActivity,
+    latestTurnSettled,
+  ]);
+
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
     if (!activeLatestTurn.completedAt) return null;
-    if (workLogEntries.length === 0) return null;
+    if (!completionSummary) return null;
 
     const turnStartedAt = Date.parse(activeLatestTurn.startedAt);
     const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
@@ -1339,9 +1338,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeLatestTurn?.completedAt,
     activeLatestTurn?.startedAt,
+    completionSummary,
     latestTurnSettled,
     timelineEntries,
-    workLogEntries.length,
   ]);
   const gitCwd = activeThread?.worktreePath ?? activeProject?.cwd ?? null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
@@ -2795,9 +2794,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(selectedModelOptionsForDispatch
           ? { modelOptions: selectedModelOptionsForDispatch }
           : {}),
-        ...(selectedProviderOptionsForDispatch
-          ? { providerOptions: selectedProviderOptionsForDispatch }
-          : {}),
         provider: selectedProvider,
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
@@ -3075,9 +3071,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
-          ...(selectedProviderOptionsForDispatch
-            ? { providerOptions: selectedProviderOptionsForDispatch }
-            : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: nextInteractionMode,
@@ -3108,7 +3101,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       runtimeMode,
       selectedModel,
       selectedModelOptionsForDispatch,
-      selectedProviderOptionsForDispatch,
       selectedProvider,
       setComposerDraftInteractionMode,
       setThreadError,
@@ -3179,9 +3171,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(selectedModelOptionsForDispatch
             ? { modelOptions: selectedModelOptionsForDispatch }
             : {}),
-          ...(selectedProviderOptionsForDispatch
-            ? { providerOptions: selectedProviderOptionsForDispatch }
-            : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
           interactionMode: "default",
@@ -3231,7 +3220,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runtimeMode,
     selectedModel,
     selectedModelOptionsForDispatch,
-    selectedProviderOptionsForDispatch,
     selectedProvider,
     settings.enableAssistantStreaming,
     syncServerReadModel,
@@ -3253,7 +3241,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           model,
           builtInModelOptionsByProvider[provider],
         ),
-        provider,
       );
       scheduleComposerFocus();
     },
@@ -3578,10 +3565,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
-          provider={selectedProvider}
-          model={selectedModel}
-          modelOptions={selectedModelOptionsForDispatch}
-          providerOptions={selectedProviderOptionsForDispatch}
           isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
@@ -4167,10 +4150,6 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
-  provider: ProviderKind;
-  model: ModelSlug;
-  modelOptions: ProviderModelOptions | undefined;
-  providerOptions: ProviderStartOptions | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -4190,10 +4169,6 @@ const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
-  provider,
-  model,
-  modelOptions,
-  providerOptions,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -4247,16 +4222,7 @@ const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadId={activeThreadId}
-            provider={provider}
-            model={model}
-            modelOptions={modelOptions}
-            providerOptions={providerOptions}
-          />
-        )}
+        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -5589,12 +5555,6 @@ function resolveModelForProviderPicker(
 
 function formatCopilotBillingMultiplier(multiplier: number): string {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(multiplier)}x`;
-}
-
-function normalizeCopilotCliPathOverride(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return /^copilot(?:\.(?:exe|cmd|bat))?$/i.test(trimmed) ? null : trimmed;
 }
 
 function formatCopilotQuotaLabel(key: string): string {

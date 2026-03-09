@@ -1,12 +1,4 @@
-import type {
-  GitStackedAction,
-  GitStatusResult,
-  ModelSlug,
-  ProviderKind,
-  ProviderModelOptions,
-  ProviderStartOptions,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -54,10 +46,6 @@ import { readNativeApi } from "~/nativeApi";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
-  provider: ProviderKind;
-  model: ModelSlug;
-  modelOptions: ProviderModelOptions | undefined;
-  providerOptions: ProviderStartOptions | undefined;
 }
 
 interface PendingDefaultBranchAction {
@@ -150,14 +138,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({
-  gitCwd,
-  activeThreadId,
-  provider,
-  model,
-  modelOptions,
-  providerOptions,
-}: GitActionsControlProps) {
+export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -343,10 +324,6 @@ export default function GitActionsControl({
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
-        provider,
-        model,
-        ...(modelOptions ? { modelOptions } : {}),
-        ...(providerOptions ? { providerOptions } : {}),
       });
 
       try {
@@ -438,10 +415,6 @@ export default function GitActionsControl({
 
     [
       isDefaultBranch,
-      model,
-      modelOptions,
-      provider,
-      providerOptions,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
       threadToastData,
