@@ -230,6 +230,11 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v4
         with:
