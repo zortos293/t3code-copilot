@@ -22,13 +22,19 @@ T3 Code is a minimal web GUI for coding agents. This fork supports both Codex an
 > [!WARNING]
 > You need to have either [Codex CLI](https://github.com/openai/codex) or GitHub Copilot available and authorized for T3 Code to work.
 
+The easiest way to use this fork is the desktop app.
+
+- Download it from the [releases page](https://github.com/zortos293/t3code-copilot/releases)
+- Launch the app and choose either `Codex` or `GitHub Copilot`
+
+You can also run it from source:
+
 ```bash
-npx t3
+bun install
+bun run dev
 ```
 
-You can also just install the desktop app. It's cooler.
-
-Install the [desktop app from the Releases page](https://github.com/pingdotgg/t3code/releases)
+Open the app, connect your provider, and start chatting.
 
 ## Some notes
 
