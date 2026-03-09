@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { markThreadUnread, reorderProject, syncServerReadModel, type AppState } from "./store";
+import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -94,19 +94,18 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
 }
 
 function makeReadModelProject(
-  id: string,
-  title: string,
-  workspaceRoot: string,
+  overrides: Partial<OrchestrationReadModel["projects"][number]>,
 ): OrchestrationReadModel["projects"][number] {
   return {
-    id: ProjectId.makeUnsafe(id),
-    title,
-    workspaceRoot,
+    id: ProjectId.makeUnsafe("project-1"),
+    title: "Project",
+    workspaceRoot: "/tmp/project",
     defaultModel: "gpt-5.3-codex",
     createdAt: "2026-02-27T00:00:00.000Z",
     updatedAt: "2026-02-27T00:00:00.000Z",
     deletedAt: null,
     scripts: [],
+    ...overrides,
   };
 }
 
@@ -150,30 +149,33 @@ describe("store pure functions", () => {
     expect(next).toEqual(initialState);
   });
 
-  it("reorderProject moves projects to a target index", () => {
-    const initialState: AppState = {
+  it("reorderProjects moves a project to a target index", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
+    const state: AppState = {
       projects: [
         {
-          id: ProjectId.makeUnsafe("project-1"),
-          name: "Alpha",
-          cwd: "/tmp/alpha",
-          model: "gpt-5-codex",
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
         },
         {
-          id: ProjectId.makeUnsafe("project-2"),
-          name: "Beta",
-          cwd: "/tmp/beta",
-          model: "gpt-5-codex",
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
         },
         {
-          id: ProjectId.makeUnsafe("project-3"),
-          name: "Gamma",
-          cwd: "/tmp/gamma",
-          model: "gpt-5-codex",
+          id: project3,
+          name: "Project 3",
+          cwd: "/tmp/project-3",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
         },
@@ -182,11 +184,9 @@ describe("store pure functions", () => {
       threadsHydrated: true,
     };
 
-    const movedToTop = reorderProject(initialState, ProjectId.makeUnsafe("project-2"), 0);
-    expect(movedToTop.projects.map((project) => project.name)).toEqual(["Beta", "Alpha", "Gamma"]);
+    const next = reorderProjects(state, project1, project3);
 
-    const movedToEnd = reorderProject(movedToTop, ProjectId.makeUnsafe("project-2"), 2);
-    expect(movedToEnd.projects.map((project) => project.name)).toEqual(["Alpha", "Gamma", "Beta"]);
+    expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
   });
 });
 
@@ -204,22 +204,25 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
   });
 
-  it("preserves the previous project order across read model syncs", () => {
+  it("preserves the current project order when syncing incoming read model updates", () => {
+    const project1 = ProjectId.makeUnsafe("project-1");
+    const project2 = ProjectId.makeUnsafe("project-2");
+    const project3 = ProjectId.makeUnsafe("project-3");
     const initialState: AppState = {
       projects: [
         {
-          id: ProjectId.makeUnsafe("project-2"),
-          name: "Beta",
-          cwd: "/tmp/beta",
-          model: "gpt-5-codex",
+          id: project2,
+          name: "Project 2",
+          cwd: "/tmp/project-2",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
         },
         {
-          id: ProjectId.makeUnsafe("project-1"),
-          name: "Alpha",
-          cwd: "/tmp/alpha",
-          model: "gpt-5-codex",
+          id: project1,
+          name: "Project 1",
+          cwd: "/tmp/project-1",
+          model: DEFAULT_MODEL_BY_PROVIDER.codex,
           expanded: true,
           scripts: [],
         },
@@ -228,20 +231,30 @@ describe("store read model sync", () => {
       threadsHydrated: true,
     };
     const readModel: OrchestrationReadModel = {
-      snapshotSequence: 1,
+      snapshotSequence: 2,
       updatedAt: "2026-02-27T00:00:00.000Z",
       projects: [
-        makeReadModelProject("project-1", "Alpha", "/tmp/alpha"),
-        makeReadModelProject("project-2", "Beta", "/tmp/beta"),
+        makeReadModelProject({
+          id: project1,
+          title: "Project 1",
+          workspaceRoot: "/tmp/project-1",
+        }),
+        makeReadModelProject({
+          id: project2,
+          title: "Project 2",
+          workspaceRoot: "/tmp/project-2",
+        }),
+        makeReadModelProject({
+          id: project3,
+          title: "Project 3",
+          workspaceRoot: "/tmp/project-3",
+        }),
       ],
       threads: [],
     };
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.projects.map((project) => project.id)).toEqual([
-      ProjectId.makeUnsafe("project-2"),
-      ProjectId.makeUnsafe("project-1"),
-    ]);
+    expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
   });
 });
