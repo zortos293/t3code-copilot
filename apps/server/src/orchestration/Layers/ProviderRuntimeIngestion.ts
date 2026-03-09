@@ -687,7 +687,7 @@ const make = Effect.gen(function* () {
             ? input.fallbackText!
             : "";
 
-      if (text.length === 0 && !input.existingMessage) {
+      if (text.length === 0 && !sawDelta && !input.existingMessage) {
         yield* clearAssistantMessageState(input.messageId);
         return;
       }

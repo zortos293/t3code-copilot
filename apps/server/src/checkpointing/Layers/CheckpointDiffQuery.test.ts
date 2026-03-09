@@ -90,12 +90,11 @@ describe("CheckpointDiffQueryLive", () => {
       readonly toCheckpointRef: CheckpointRef;
       readonly cwd: string;
     }> = [];
-    const workspaceRoot = process.cwd();
 
     const snapshot = makeSnapshot({
       projectId,
       threadId,
-      workspaceRoot,
+      workspaceRoot: "/tmp/workspace",
       worktreePath: null,
       checkpointTurnCount: 1,
       checkpointRef: toCheckpointRef,
@@ -142,7 +141,7 @@ describe("CheckpointDiffQueryLive", () => {
     expect(hasCheckpointRefCalls).toEqual([expectedFromRef, toCheckpointRef]);
     expect(diffCheckpointsCalls).toEqual([
       {
-        cwd: workspaceRoot,
+        cwd: "/tmp/workspace",
         fromCheckpointRef: expectedFromRef,
         toCheckpointRef,
       },

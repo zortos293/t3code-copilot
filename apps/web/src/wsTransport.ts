@@ -110,10 +110,6 @@ export class WsTransport {
 
     ws.addEventListener("open", () => {
       this.ws = ws;
-      if (this.reconnectTimer !== null) {
-        clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-      }
       this.reconnectAttempt = 0;
     });
 
@@ -127,10 +123,7 @@ export class WsTransport {
     });
 
     ws.addEventListener("error", () => {
-      if (this.ws === ws) {
-        this.ws = null;
-      }
-      this.scheduleReconnect();
+      // close event will fire after error
     });
   }
 
@@ -205,7 +198,7 @@ export class WsTransport {
   }
 
   private scheduleReconnect() {
-    if (this.disposed || this.reconnectTimer !== null) return;
+    if (this.disposed) return;
 
     const delay =
       RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ??

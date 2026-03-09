@@ -185,10 +185,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     cwd,
     prompt,
     outputSchemaJson,
-    binaryPath = "codex",
-    homePath,
-    model = CODEX_MODEL,
-    reasoningEffort = CODEX_REASONING_EFFORT,
     imagePaths = [],
     cleanupPaths = [],
   }: {
@@ -196,10 +192,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
-    binaryPath?: string;
-    homePath?: string;
-    model?: string;
-    reasoningEffort?: string;
     imagePaths?: ReadonlyArray<string>;
     cleanupPaths?: ReadonlyArray<string>;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
@@ -213,16 +205,16 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
       const runCodexCommand = Effect.gen(function* () {
         const command = ChildProcess.make(
-          binaryPath,
+          "codex",
           [
             "exec",
             "--ephemeral",
             "-s",
             "read-only",
             "--model",
-            model,
+            CODEX_MODEL,
             "--config",
-            `model_reasoning_effort="${reasoningEffort}"`,
+            `model_reasoning_effort="${CODEX_REASONING_EFFORT}"`,
             "--output-schema",
             schemaPath,
             "--output-last-message",
@@ -232,7 +224,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           ],
           {
             cwd,
-            ...(homePath ? { env: { ...process.env, HOME: homePath } } : {}),
             shell: process.platform === "win32",
             stdin: {
               stream: Stream.make(new TextEncoder().encode(prompt)),
@@ -323,11 +314,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
     const wantsBranch = input.includeBranch === true;
-    const binaryPath = input.providerOptions?.codex?.binaryPath ?? "codex";
-    const homePath = input.providerOptions?.codex?.homePath;
-    const model = input.model ?? CODEX_MODEL;
-    const reasoningEffort =
-      input.modelOptions?.codex?.reasoningEffort ?? CODEX_REASONING_EFFORT;
 
     const prompt = [
       "You write concise git commit messages.",
@@ -367,10 +353,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       cwd: input.cwd,
       prompt,
       outputSchemaJson,
-      binaryPath,
-      model,
-      reasoningEffort,
-      ...(homePath ? { homePath } : {}),
     }).pipe(
       Effect.map(
         (generated) =>
@@ -386,11 +368,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   };
 
   const generatePrContent: TextGenerationShape["generatePrContent"] = (input) => {
-    const binaryPath = input.providerOptions?.codex?.binaryPath ?? "codex";
-    const homePath = input.providerOptions?.codex?.homePath;
-    const model = input.model ?? CODEX_MODEL;
-    const reasoningEffort =
-      input.modelOptions?.codex?.reasoningEffort ?? CODEX_REASONING_EFFORT;
     const prompt = [
       "You write GitHub pull request content.",
       "Return a JSON object with keys: title, body.",
@@ -417,10 +394,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       operation: "generatePrContent",
       cwd: input.cwd,
       prompt,
-      binaryPath,
-      model,
-      reasoningEffort,
-      ...(homePath ? { homePath } : {}),
       outputSchemaJson: Schema.Struct({
         title: Schema.String,
         body: Schema.String,

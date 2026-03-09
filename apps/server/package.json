@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@github/copilot": "1.0.2",
-    "@github/copilot-sdk": "0.1.31-unstable.0",
+    "@github/copilot-sdk": "0.1.32",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
     "@pierre/diffs": "^1.1.0-beta.16",

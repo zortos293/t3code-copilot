@@ -8,13 +8,7 @@
  */
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
-import type {
-  ChatAttachment,
-  ModelSlug,
-  ProviderKind,
-  ProviderModelOptions,
-  ProviderStartOptions,
-} from "@t3tools/contracts";
+import type { ChatAttachment } from "@t3tools/contracts";
 
 import type { TextGenerationError } from "../Errors.ts";
 
@@ -23,10 +17,6 @@ export interface CommitMessageGenerationInput {
   branch: string | null;
   stagedSummary: string;
   stagedPatch: string;
-  provider?: ProviderKind | undefined;
-  model?: ModelSlug | undefined;
-  modelOptions?: ProviderModelOptions | undefined;
-  providerOptions?: ProviderStartOptions | undefined;
   /** When true, the model also returns a semantic branch name for the change. */
   includeBranch?: boolean;
 }
@@ -45,10 +35,6 @@ export interface PrContentGenerationInput {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
-  provider?: ProviderKind | undefined;
-  model?: ModelSlug | undefined;
-  modelOptions?: ProviderModelOptions | undefined;
-  providerOptions?: ProviderStartOptions | undefined;
 }
 
 export interface PrContentGenerationResult {
