@@ -174,7 +174,7 @@ function readSkillsConfigEntries(configPath: string): Map<string, boolean> {
   let m: RegExpExecArray | null;
   while ((m = blockRe.exec(content)) !== null) {
     const block = m[1]!;
-    const pathMatch = block.match(/^path\s*=\s*"(.+?)"/m);
+    const pathMatch = block.match(/^path\s*=\s*"((?:\\.|[^"\\])*)"/m);
     const enabledMatch = block.match(/^enabled\s*=\s*(true|false)/m);
     if (pathMatch) {
       // Unescape TOML basic string sequences relevant to file paths
@@ -369,6 +369,14 @@ function searchSkills(input: SkillsSearchInput): Effect.Effect<SkillsSearchResul
 
 /** Install a skill from skills.sh for all configured platforms. */
 function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallResult, SkillsError> {
+  try {
+    assertValidSkillSlug(input.skillName);
+  } catch (error) {
+    return Effect.succeed({
+      success: false,
+      message: error instanceof Error ? error.message : `Invalid skill name: ${input.skillName}`,
+    } satisfies SkillsInstallResult);
+  }
   const agentFlags = SKILLS_PLATFORMS.flatMap((p) => ["-a", p.cliFlag]);
   return runCommand(
     "npx",
@@ -390,6 +398,14 @@ function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallRes
 
 /** Uninstall a skill globally. */
 function uninstallSkill(input: SkillsUninstallInput): Effect.Effect<SkillsUninstallResult, SkillsError> {
+  try {
+    assertValidSkillSlug(input.skillName);
+  } catch (error) {
+    return Effect.succeed({
+      success: false,
+      message: error instanceof Error ? error.message : `Invalid skill name: ${input.skillName}`,
+    } satisfies SkillsUninstallResult);
+  }
   return runCommand(
     "npx",
     ["skills", "remove", input.skillName, "-g", "-y"],

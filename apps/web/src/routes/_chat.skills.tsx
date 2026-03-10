@@ -65,6 +65,30 @@ function formatInstallCount(installs: number): string {
   return `${installCountFormatter.format(installs)} installs`;
 }
 
+function mutationErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+export function AgentBadges({ agents }: { agents: ReadonlyArray<string> }) {
+  return agents.map((agent) => {
+    const PlatformIcon = PLATFORM_ICONS[agent];
+    return PlatformIcon ? (
+      <PlatformIcon
+        key={agent}
+        className="size-3.5 shrink-0 text-muted-foreground"
+        aria-label={agent}
+      />
+    ) : (
+      <span
+        key={agent}
+        className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+      >
+        {agent}
+      </span>
+    );
+  });
+}
+
 // ── Skill Card ──────────────────────────────────────────────────────
 
 function SkillCard({
@@ -95,23 +119,7 @@ function SkillCard({
             <p className="text-sm font-medium text-foreground">
               {formatSkillDisplayName(skill.name)}
             </p>
-            {skill.agents.map((agent) => {
-              const PlatformIcon = PLATFORM_ICONS[agent];
-              return PlatformIcon ? (
-                <PlatformIcon
-                  key={agent}
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                  aria-label={agent}
-                />
-              ) : (
-                <span
-                  key={agent}
-                  className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-                >
-                  {agent}
-                </span>
-              );
-            })}
+            <AgentBadges agents={skill.agents} />
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{skill.description}</p>
         </div>
@@ -213,23 +221,7 @@ function SkillDetailView({
             <h2 className="text-base font-semibold text-foreground">
               {formatSkillDisplayName(skill.name)}
             </h2>
-            {skill.agents.map((agent) => {
-              const PlatformIcon = PLATFORM_ICONS[agent];
-              return PlatformIcon ? (
-                <PlatformIcon
-                  key={agent}
-                  className="size-3.5 shrink-0 text-muted-foreground"
-                  aria-label={agent}
-                />
-              ) : (
-                <span
-                  key={agent}
-                  className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-                >
-                  {agent}
-                </span>
-              );
-            })}
+            <AgentBadges agents={skill.agents} />
           </div>
           {skill.description && (
             <p className="text-xs text-muted-foreground">{skill.description}</p>
@@ -306,23 +298,35 @@ function SkillsRouteView() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const normalizedSearch = search.trim();
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
-    if (search.length < 2) {
+    if (normalizedSearch.length < 2) {
       setDebouncedSearch("");
       return;
     }
     debounceRef.current = setTimeout(() => {
-      setDebouncedSearch(search);
+      setDebouncedSearch(normalizedSearch);
     }, 300);
     return () => clearTimeout(debounceRef.current);
-  }, [search]);
+  }, [normalizedSearch]);
 
   const searchQuery = useQuery(skillsSearchQueryOptions(debouncedSearch));
 
   const handleToggle = (skillName: string, enabled: boolean) => {
-    toggleMutation.mutate({ skillName, enabled });
+    toggleMutation.mutate(
+      { skillName, enabled },
+      {
+        onError: (error) => {
+          toastManager.add({
+            type: "error",
+            title: "Toggle failed",
+            description: mutationErrorMessage(error),
+          });
+        },
+      },
+    );
   };
 
   const handleUninstall = (skillName: string) => {
@@ -336,6 +340,13 @@ function SkillsRouteView() {
           } else {
             toastManager.add({ type: "error", title: "Uninstall failed", description: result.message });
           }
+        },
+        onError: (error) => {
+          toastManager.add({
+            type: "error",
+            title: "Uninstall failed",
+            description: mutationErrorMessage(error),
+          });
         },
       },
     );
@@ -352,6 +363,13 @@ function SkillsRouteView() {
             toastManager.add({ type: "error", title: "Install failed", description: result.message });
           }
         },
+        onError: (error) => {
+          toastManager.add({
+            type: "error",
+            title: "Install failed",
+            description: mutationErrorMessage(error),
+          });
+        },
       },
     );
   };
@@ -359,14 +377,14 @@ function SkillsRouteView() {
   const skills = skillsQuery.data?.skills;
   const filteredSkills = useMemo(() => {
     if (!skills) return [];
-    if (!search) return skills;
-    const lower = search.toLowerCase();
+    if (!normalizedSearch) return skills;
+    const lower = normalizedSearch.toLowerCase();
     return skills.filter(
       (skill) =>
         skill.name.toLowerCase().includes(lower) ||
         skill.description.toLowerCase().includes(lower),
     );
-  }, [skills, search]);
+  }, [normalizedSearch, skills]);
 
   // Filter out already-installed skills from search results
   const installedNames = useMemo(() => {
