@@ -3638,7 +3638,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               data-chat-composer-form="true"
             >
               <div
-                className={`group rounded-[20px] border bg-card transition-colors duration-200 ${
+                className={`group relative overflow-visible rounded-[20px] border bg-card transition-colors duration-200 ${
                   isDragOverComposer
                     ? "border-primary/70 bg-accent/30"
                     : interactionMode === "plan"
@@ -3650,6 +3650,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 onDragLeave={onComposerDragLeave}
                 onDrop={onComposerDrop}
               >
+                {interactionMode === "plan" && (
+                  <span className="absolute -top-3 left-5 rounded-full border border-border group-focus-within:border-ring-plan/45 bg-card transition-colors duration-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-ring-plan/50 group-focus-within:text-ring-plan">
+                    Plan
+                  </span>
+                )}
                 {activePendingApproval ? (
                   <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                     <ComposerPendingApprovalPanel
