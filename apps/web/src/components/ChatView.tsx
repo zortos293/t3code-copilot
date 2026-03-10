@@ -1027,10 +1027,14 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length === 0 && (
           <p className="px-3 py-2 text-muted-foreground/70 text-xs">
             {props.isLoading
-              ? "Searching workspace files..."
+              ? props.triggerKind === "slash-skill"
+                ? "Loading skills..."
+                : "Searching workspace files..."
               : props.triggerKind === "path"
                 ? "No matching files or folders."
-                : "No matching command."}
+                : props.triggerKind === "slash-skill"
+                  ? "No matching skills."
+                  : "No matching command."}
           </p>
         )}
       </div>

@@ -79,10 +79,35 @@ const SKILLS_PLATFORMS: readonly SkillsPlatform[] = [
 const AGENTS_SKILLS_DIR = path.join(home, ".agents", "skills");
 
 const VALID_SKILL_SLUG = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+const SKILLS_SEARCH_TIMEOUT_MS = 5_000;
+const configWriteLocks = new Map<string, Promise<void>>();
 
 function assertValidSkillSlug(name: string): void {
   if (!VALID_SKILL_SLUG.test(name)) {
     throw new Error(`Invalid skill name: ${name}`);
+  }
+}
+
+function escapeTomlBasicString(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+async function withConfigWriteLock<T>(configPath: string, operation: () => Promise<T>): Promise<T> {
+  const previous = configWriteLocks.get(configPath) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const queued = previous.catch(() => undefined).then(() => current);
+  configWriteLocks.set(configPath, queued);
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (configWriteLocks.get(configPath) === queued) {
+      configWriteLocks.delete(configPath);
+    }
   }
 }
 
@@ -142,6 +167,7 @@ function readSkillsConfigEntries(configPath: string): Map<string, boolean> {
   } catch {
     return entries;
   }
+  content = content.replaceAll("\r\n", "\n");
 
   // Match each [[skills.config]] block: grab text until the next [[...]] header or EOF.
   const blockRe = /^\[\[skills\.config\]\]\s*\n((?:(?!\[).*\n?)*)/gm;
@@ -169,47 +195,43 @@ async function writeSkillConfigEntry(
   skillMdPath: string,
   enabled: boolean,
 ): Promise<void> {
-  let content: string;
-  try {
-    content = await fsp.readFile(configPath, "utf-8");
-  } catch {
-    content = "";
-  }
+  await withConfigWriteLock(configPath, async () => {
+    let content: string;
+    try {
+      content = await fsp.readFile(configPath, "utf-8");
+    } catch {
+      content = "";
+    }
 
-  // Build a regex that matches the full [[skills.config]] block for this specific path.
-  // The block ends at the next [[...]] header, a blank line followed by a non-indented key, or EOF.
-  const escapedPath = skillMdPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const entryRe = new RegExp(
-    `\\[\\[skills\\.config\\]\\]\\s*\\npath\\s*=\\s*"${escapedPath}"\\s*\\nenabled\\s*=\\s*(?:true|false)\\s*\\n?`,
-    "g",
-  );
+    const tomlSafeSkillMdPath = escapeTomlBasicString(skillMdPath);
+    const escapedPath = tomlSafeSkillMdPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const entryRe = new RegExp(
+      `\\[\\[skills\\.config\\]\\]\\s*\\r?\\npath\\s*=\\s*"${escapedPath}"\\s*\\r?\\nenabled\\s*=\\s*(?:true|false)\\s*\\r?\\n?`,
+      "g",
+    );
+    const cleaned = content.replace(entryRe, "");
+    const entry = `\n[[skills.config]]\npath = "${tomlSafeSkillMdPath}"\nenabled = false\n`;
+    const nextContent = enabled ? cleaned : cleaned + entry;
+    const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
 
-  // Remove any existing entry for this path
-  const cleaned = content.replace(entryRe, "");
-
-  if (enabled) {
-    // Just remove the disabled entry — skill is enabled by default
     await fsp.mkdir(path.dirname(configPath), { recursive: true });
-    await fsp.writeFile(configPath, cleaned);
-  } else {
-    // Append a disabled entry
-    const entry = `\n[[skills.config]]\npath = "${skillMdPath}"\nenabled = false\n`;
-    await fsp.mkdir(path.dirname(configPath), { recursive: true });
-    await fsp.writeFile(configPath, cleaned + entry);
-  }
+    await fsp.writeFile(tempPath, nextContent);
+    await fsp.rename(tempPath, configPath);
+  });
 }
 
 /** Check which configured platforms have this skill enabled. */
-function resolveSkillAgents(skillName: string): string[] {
-  const skillDir = path.join(AGENTS_SKILLS_DIR, skillName);
-  const skillMdPath = resolveSkillMdPath(skillDir);
+function resolveSkillAgents(
+  skillMdPath: string | undefined,
+  configEntriesByPath: ReadonlyMap<string, ReadonlyMap<string, boolean>>,
+): string[] {
   if (!skillMdPath) return [];
 
   const agents: string[] = [];
   for (const platform of SKILLS_PLATFORMS) {
-    const entries = readSkillsConfigEntries(platform.configPath);
+    const entries = configEntriesByPath.get(platform.configPath);
     // Skill is enabled unless explicitly disabled in the config
-    const entry = entries.get(skillMdPath);
+    const entry = entries?.get(skillMdPath);
     if (entry !== false) {
       agents.push(platform.name);
     }
@@ -235,6 +257,12 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
       const skills: SkillMetadata[] = [];
+      const configEntriesByPath = new Map(
+        SKILLS_PLATFORMS.map((platform) => [
+          platform.configPath,
+          readSkillsConfigEntries(platform.configPath),
+        ]),
+      );
 
       let dirEntries: fs.Dirent[];
       try {
@@ -261,7 +289,7 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
         const { description } = parseSkillFrontmatter(content);
 
         // Skill is enabled unless explicitly disabled in a platform config.
-        const agents = resolveSkillAgents(entry.name);
+        const agents = resolveSkillAgents(skillMdPath, configEntriesByPath);
         const enabled = agents.length > 0;
 
         skills.push({
@@ -307,7 +335,21 @@ function searchSkills(input: SkillsSearchInput): Effect.Effect<SkillsSearchResul
   return Effect.tryPromise({
     try: async () => {
       const url = `https://skills.sh/api/search?q=${encodeURIComponent(input.query)}&limit=10`;
-      const res = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), SKILLS_SEARCH_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetch(url, { signal: controller.signal });
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error(`skills.sh API timed out after ${SKILLS_SEARCH_TIMEOUT_MS}ms`, {
+            cause: error,
+          });
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!res.ok) throw new Error(`skills.sh API returned ${res.status}`);
       const data = (await res.json()) as {
         skills: Array<{ id: string; name: string; installs: number; source: string }>;
@@ -315,7 +357,7 @@ function searchSkills(input: SkillsSearchInput): Effect.Effect<SkillsSearchResul
       const skills: SkillSearchResultEntry[] = data.skills.map((s) => ({
         name: s.name,
         source: s.source,
-        installs: `${s.installs} installs`,
+        installs: s.installs,
         url: `https://skills.sh/${s.id}`,
       }));
       return { skills } satisfies SkillsSearchResult;
@@ -380,7 +422,7 @@ function readContent(input: SkillsReadContentInput): Effect.Effect<SkillsReadCon
       const raw = await fsp.readFile(skillMdPath, "utf-8");
 
       // Strip YAML frontmatter (everything between opening and closing ---)
-      const content = raw.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+      const content = raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)?/, "").trim();
 
       return { skillName: input.skillName, content } satisfies SkillsReadContentResult;
     },

@@ -39,7 +39,7 @@ export type SkillsSearchInput = typeof SkillsSearchInput.Type;
 export const SkillSearchResultEntry = Schema.Struct({
   name: Schema.String,
   source: Schema.String,
-  installs: Schema.String,
+  installs: Schema.Number,
   url: Schema.String,
 });
 export type SkillSearchResultEntry = typeof SkillSearchResultEntry.Type;

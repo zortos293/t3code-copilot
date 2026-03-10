@@ -12,7 +12,7 @@ export type ComposerPromptSegment =
       name: string;
     };
 
-const CHIP_TOKEN_REGEX = /(^|\s)(?:@([^\s@]+)|\$([a-zA-Z][a-zA-Z0-9_-]*))(?=\s)/g;
+const CHIP_TOKEN_REGEX = /(^|\s)(?:@([^\s@]+)|\$([a-zA-Z][a-zA-Z0-9_-]*))(?=\s|$)/g;
 
 function pushTextSegment(segments: ComposerPromptSegment[], text: string): void {
   if (!text) return;

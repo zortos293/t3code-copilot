@@ -11,9 +11,17 @@ describe("splitPromptIntoComposerSegments", () => {
     ]);
   });
 
-  it("does not convert an incomplete trailing mention token", () => {
+  it("converts a trailing mention token at end of input", () => {
     expect(splitPromptIntoComposerSegments("Inspect @AGENTS.md")).toEqual([
-      { type: "text", text: "Inspect @AGENTS.md" },
+      { type: "text", text: "Inspect " },
+      { type: "mention", path: "AGENTS.md" },
+    ]);
+  });
+
+  it("converts a trailing skill token at end of input", () => {
+    expect(splitPromptIntoComposerSegments("Use $reviewer")).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "reviewer" },
     ]);
   });
 

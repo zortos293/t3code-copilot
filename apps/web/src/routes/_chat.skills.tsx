@@ -52,12 +52,17 @@ const PLATFORM_ICONS: Record<string, Icon> = {
   Cursor: CursorIcon,
   OpenCode: OpenCodeIcon,
 };
+const installCountFormatter = new Intl.NumberFormat();
 
 function formatSkillDisplayName(name: string): string {
   return name
     .split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function formatInstallCount(installs: number): string {
+  return `${installCountFormatter.format(installs)} installs`;
 }
 
 // ── Skill Card ──────────────────────────────────────────────────────
@@ -155,7 +160,9 @@ function SearchResultCard({
           {formatSkillDisplayName(result.name)}
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">{result.source}</p>
-        <p className="mt-0.5 text-[10px] text-muted-foreground/60">{result.installs}</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+          {formatInstallCount(result.installs)}
+        </p>
       </div>
       <Button
         size="xs"
@@ -520,7 +527,8 @@ function SkillsRouteView() {
                           onInstall={handleInstall}
                           isInstalling={
                             installMutation.isPending &&
-                            installMutation.variables?.source === result.source
+                            installMutation.variables?.source === result.source &&
+                            installMutation.variables?.skillName === result.name
                           }
                         />
                       ))}

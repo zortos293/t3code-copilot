@@ -1107,9 +1107,7 @@ export default function Sidebar() {
               render={<button type="button" />}
               isActive={pathname === "/skills"}
               size="sm"
-              className={`cursor-pointer gap-2 px-2 py-1.5 text-xs font-medium hover:bg-accent hover:text-foreground data-[active=true]:bg-accent data-[active=true]:text-foreground ${
-                pathname === "/skills" ? "" : "text-muted-foreground"
-              }`}
+              className="cursor-pointer gap-2 px-2 py-1.5 font-medium text-muted-foreground text-xs hover:bg-accent hover:text-foreground data-[active=true]:bg-accent data-[active=true]:text-foreground"
               onClick={() => void navigate({ to: "/skills" })}
             >
               <PuzzleIcon className="size-3.5 shrink-0" />
