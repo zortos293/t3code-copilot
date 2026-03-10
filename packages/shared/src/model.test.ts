@@ -54,6 +54,12 @@ describe("resolveModelSlug", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
   });
+
+  it("resolves built-in webgpu models", () => {
+    expect(resolveModelSlug("onnx-community/Qwen2.5-0.5B-Instruct", "webgpu")).toBe(
+      "onnx-community/Qwen2.5-0.5B-Instruct",
+    );
+  });
 });
 
 describe("getReasoningEffortOptions", () => {

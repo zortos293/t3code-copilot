@@ -189,7 +189,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "copilot") {
+  if (providerName === "codex" || providerName === "copilot" || providerName === "webgpu") {
     return providerName;
   }
   return "codex";
@@ -197,13 +197,22 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
 const COPILOT_MODEL_SLUGS = new Set<string>(getModelOptions("copilot").map((option) => option.slug));
+const WEBGPU_MODEL_SLUGS = new Set<string>(getModelOptions("webgpu").map((option) => option.slug));
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex" || input.sessionProviderName === "copilot") {
+  if (
+    input.sessionProviderName === "codex" ||
+    input.sessionProviderName === "copilot" ||
+    input.sessionProviderName === "webgpu"
+  ) {
     return input.sessionProviderName;
+  }
+  const normalizedWebGpu = normalizeModelSlug(input.model, "webgpu");
+  if (normalizedWebGpu && WEBGPU_MODEL_SLUGS.has(normalizedWebGpu)) {
+    return "webgpu";
   }
   const normalizedCopilot = normalizeModelSlug(input.model, "copilot");
   if (normalizedCopilot && COPILOT_MODEL_SLUGS.has(normalizedCopilot)) {

@@ -770,19 +770,26 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("keeps Claude Code and Cursor visible as unavailable placeholders in the stack base", () => {
+  it("keeps available providers and unavailable placeholders visible in the stack base", () => {
     const copilot = PROVIDER_OPTIONS.find((option) => option.value === "copilot");
+    const webgpu = PROVIDER_OPTIONS.find((option) => option.value === "webgpu");
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeCode");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
       { value: "copilot", label: "GitHub Copilot", available: true },
+      { value: "webgpu", label: "Local WebGPU", available: true },
       { value: "claudeCode", label: "Claude Code", available: false },
       { value: "cursor", label: "Cursor", available: false },
     ]);
     expect(copilot).toEqual({
       value: "copilot",
       label: "GitHub Copilot",
+      available: true,
+    });
+    expect(webgpu).toEqual({
+      value: "webgpu",
+      label: "Local WebGPU",
       available: true,
     });
     expect(claude).toEqual({

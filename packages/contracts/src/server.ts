@@ -1,5 +1,10 @@
 import { Schema } from "effect";
-import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas";
 import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings";
 import { EditorId } from "./editor";
 import { ProviderKind } from "./orchestration";
@@ -97,3 +102,43 @@ export const ServerConfigUpdatedPayload = Schema.Struct({
   providers: ServerProviderStatuses,
 });
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
+
+const SERVER_HUGGING_FACE_MODEL_SEARCH_QUERY_MAX_LENGTH = 120;
+const SERVER_HUGGING_FACE_MODEL_SEARCH_MAX_LIMIT = 24;
+
+export const ServerHuggingFaceModelSearchMode = Schema.Literals(["featured", "search"]);
+export type ServerHuggingFaceModelSearchMode = typeof ServerHuggingFaceModelSearchMode.Type;
+
+export const ServerHuggingFaceModelCompatibility = Schema.Literals(["recommended", "community"]);
+export type ServerHuggingFaceModelCompatibility = typeof ServerHuggingFaceModelCompatibility.Type;
+
+export const ServerHuggingFaceModelSearchInput = Schema.Struct({
+  query: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(SERVER_HUGGING_FACE_MODEL_SEARCH_QUERY_MAX_LENGTH)),
+  ),
+  limit: Schema.optional(
+    PositiveInt.check(Schema.isLessThanOrEqualTo(SERVER_HUGGING_FACE_MODEL_SEARCH_MAX_LIMIT)),
+  ),
+});
+export type ServerHuggingFaceModelSearchInput = typeof ServerHuggingFaceModelSearchInput.Type;
+
+export const ServerHuggingFaceModel = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  author: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  downloads: NonNegativeInt,
+  likes: NonNegativeInt,
+  pipelineTag: TrimmedNonEmptyString,
+  libraryName: Schema.optional(TrimmedNonEmptyString),
+  license: Schema.optional(TrimmedNonEmptyString),
+  compatibility: ServerHuggingFaceModelCompatibility,
+});
+export type ServerHuggingFaceModel = typeof ServerHuggingFaceModel.Type;
+
+export const ServerHuggingFaceModelSearchResult = Schema.Struct({
+  mode: ServerHuggingFaceModelSearchMode,
+  query: Schema.optional(TrimmedNonEmptyString),
+  models: Schema.Array(ServerHuggingFaceModel),
+  truncated: Schema.Boolean,
+});
+export type ServerHuggingFaceModelSearchResult = typeof ServerHuggingFaceModelSearchResult.Type;

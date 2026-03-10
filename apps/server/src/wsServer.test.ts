@@ -761,6 +761,76 @@ describe("WebSocket Server", () => {
     expectAvailableEditors((response.result as { availableEditors: unknown }).availableEditors);
   });
 
+  it("responds to server.searchHuggingFaceModels", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "onnx-community/Qwen2.5-Coder-1.5B-Instruct",
+            likes: 7,
+            downloads: 104,
+            private: false,
+            tags: ["transformers.js", "onnx", "text-generation", "license:apache-2.0"],
+            pipeline_tag: "text-generation",
+            library_name: "transformers.js",
+          },
+          {
+            id: "community/Qwen-helper",
+            likes: 1,
+            downloads: 12,
+            private: false,
+            tags: ["transformers.js", "text-generation"],
+            pipeline_tag: "text-generation",
+            library_name: "transformers.js",
+          },
+        ]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    server = await createTestServer({ cwd: "/my/workspace" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.serverSearchHuggingFaceModels, {
+      query: "qwen coder",
+      limit: 5,
+    });
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      mode: "search",
+      query: "qwen coder",
+      models: [
+        {
+          id: "onnx-community/Qwen2.5-Coder-1.5B-Instruct",
+          author: "onnx-community",
+          name: "Qwen2.5-Coder-1.5B-Instruct",
+          downloads: 104,
+          likes: 7,
+          pipelineTag: "text-generation",
+          libraryName: "transformers.js",
+          license: "apache-2.0",
+          compatibility: "recommended",
+        },
+        {
+          id: "community/Qwen-helper",
+          author: "community",
+          name: "Qwen-helper",
+          downloads: 12,
+          likes: 1,
+          pipelineTag: "text-generation",
+          libraryName: "transformers.js",
+          compatibility: "community",
+        },
+      ],
+      truncated: false,
+    });
+  });
+
   it("bootstraps default keybindings file when missing", async () => {
     const stateDir = makeTempDir("t3code-state-bootstrap-keybindings-");
     const keybindingsPath = path.join(stateDir, "keybindings.json");

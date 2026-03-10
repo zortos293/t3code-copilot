@@ -1,8 +1,8 @@
 # T3 Code + Copilot
 
-This repo is a T3 Code fork that stays up to date with upstream and adds GitHub Copilot support.
+This repo is a T3 Code fork that stays up to date with upstream and adds GitHub Copilot plus browser-local WebGPU support.
 
-T3 Code is a minimal web GUI for coding agents. This fork supports both Codex and GitHub Copilot.
+T3 Code is a minimal web GUI for coding agents. This fork supports Codex, GitHub Copilot, and a browser-side Local WebGPU adapter powered by Hugging Face Transformers.js.
 
 ## Preview
 
@@ -13,17 +13,18 @@ T3 Code is a minimal web GUI for coding agents. This fork supports both Codex an
 
 - tracks upstream `pingdotgg/t3code`
 - adds GitHub Copilot provider support
+- adds a browser-side Local WebGPU provider for curated Hugging Face ONNX models
 - keeps Codex support working too
 
 ## How to use
 
 > [!WARNING]
-> You need to have either [Codex CLI](https://github.com/openai/codex) or GitHub Copilot available and authorized for T3 Code to work.
+> You need either [Codex CLI](https://github.com/openai/codex), GitHub Copilot, or a WebGPU-capable browser for the Local WebGPU adapter.
 
 The easiest way to use this fork is the desktop app.
 
 - Download it from the [releases page](https://github.com/zortos293/t3code-copilot/releases)
-- Launch the app and choose either `Codex` or `GitHub Copilot`
+- Launch the app and choose `Codex`, `GitHub Copilot`, or `Local WebGPU`
 
 You can also run it from source:
 
@@ -33,6 +34,13 @@ bun run dev
 ```
 
 Open the app, connect your provider, and start chatting.
+
+### Local WebGPU notes
+
+- Local WebGPU runs entirely in the browser and does not use the server provider runtime.
+- The first run downloads model files from Hugging Face/CDN endpoints and may take a while.
+- Use the Settings browser to search compatible Hugging Face models, then start with the smaller instruct variants for the best chance of fitting browser memory limits.
+- WebGPU availability depends on browser, OS, and GPU support. Recent Chromium-based browsers work best today.
 
 ## Some notes
 

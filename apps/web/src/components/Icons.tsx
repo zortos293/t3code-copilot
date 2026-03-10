@@ -287,6 +287,20 @@ export const Gemini: Icon = (props) => (
   </svg>
 );
 
+export const HUGGING_FACE_BRAND_ASSET_URL =
+  "https://huggingface.co/datasets/huggingface/brand-assets/resolve/main/hf-logo.svg";
+
+export const HuggingFaceIcon: Icon = (props) => (
+  <svg {...props} viewBox="12 12 232 232" fill="none" aria-hidden="true">
+    <image
+      href={HUGGING_FACE_BRAND_ASSET_URL}
+      width="256"
+      height="256"
+      preserveAspectRatio="xMidYMid meet"
+    />
+  </svg>
+);
+
 export const OpenCodeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g clipPath="url(#opencode__clip0_1311_94969)">

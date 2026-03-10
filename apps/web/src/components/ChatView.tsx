@@ -41,6 +41,7 @@ import {
   useRef,
   useState,
   useId,
+  useSyncExternalStore,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
@@ -186,6 +187,7 @@ import {
   CursorIcon,
   Gemini,
   GitHubIcon,
+  HuggingFaceIcon,
   Icon,
   OpenAI,
   OpenCodeIcon,
@@ -219,6 +221,10 @@ import { Toggle } from "./ui/toggle";
 import { SidebarTrigger } from "./ui/sidebar";
 import { newCommandId, newMessageId, newThreadId } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
+import {
+  getLocalWebGpuStatusSnapshot,
+  subscribeLocalWebGpuStatus,
+} from "../localWebGpuOrchestration";
 import {
   getAppModelOptions,
   resolveAppModelSelection,
@@ -1075,6 +1081,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
+  const clearProjectDraftThreadById = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadById,
+  );
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
@@ -1329,6 +1338,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
   const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const localWebGpuStatus = useSyncExternalStore(
+    subscribeLocalWebGpuStatus,
+    getLocalWebGpuStatusSnapshot,
+    getLocalWebGpuStatusSnapshot,
+  );
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const copilotProviderStatus =
     providerStatuses.find((status) => status.provider === "copilot") ?? null;
@@ -1346,30 +1360,41 @@ export default function ChatView({ threadId }: ChatViewProps) {
         copilotProviderModels.length > 0
           ? copilotProviderModels.map((model) => ({ slug: model.id, name: model.name }))
           : getModelOptions("copilot"),
+      webgpu: getModelOptions("webgpu"),
     }),
     [copilotProviderModels],
+  );
+  const customModelsByProvider = useMemo<Record<ProviderKind, readonly string[]>>(
+    () => ({
+      codex: settings.customCodexModels,
+      copilot: settings.customCopilotModels,
+      webgpu: settings.customWebGpuModels,
+    }),
+    [settings.customCodexModels, settings.customCopilotModels, settings.customWebGpuModels],
   );
   const defaultModelByProvider = useMemo<Record<ProviderKind, string>>(
     () => ({
       codex: getDefaultModel("codex"),
       copilot: builtInModelOptionsByProvider.copilot[0]?.slug ?? getDefaultModel("copilot"),
+      webgpu: settings.webGpuDefaultModel,
     }),
-    [builtInModelOptionsByProvider],
+    [builtInModelOptionsByProvider, settings.webGpuDefaultModel],
   );
   const baseThreadModel =
-    selectedProvider === "copilot"
+    selectedProvider === "copilot" || selectedProvider === "webgpu"
       ? resolveAppModelSelection(
-          "copilot",
-          settings.customCopilotModels,
-          activeThread?.model ?? activeProject?.model ?? defaultModelByProvider.copilot,
-          builtInModelOptionsByProvider.copilot,
+          selectedProvider,
+          customModelsByProvider[selectedProvider],
+          activeThread?.model ??
+            (selectedProvider === "webgpu" ? defaultModelByProvider.webgpu : activeProject?.model) ??
+            defaultModelByProvider[selectedProvider],
+          builtInModelOptionsByProvider[selectedProvider],
         )
       : resolveModelSlugForProvider(
           selectedProvider,
           activeThread?.model ?? activeProject?.model ?? defaultModelByProvider[selectedProvider],
         );
-  const customModelsForSelectedProvider =
-    selectedProvider === "copilot" ? settings.customCopilotModels : settings.customCodexModels;
+  const customModelsForSelectedProvider = customModelsByProvider[selectedProvider];
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -1418,9 +1443,28 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (selectedProvider === "copilot" && supportsReasoningEffort && selectedEffort) {
       return { copilot: { reasoningEffort: selectedEffort } };
     }
+    if (selectedProvider === "webgpu") {
+      return {
+        webgpu: {
+          dtype: settings.webGpuPreferredDtype,
+          maxTokens: 384,
+          temperature: 0.7,
+          topP: 0.95,
+        },
+      };
+    }
     return undefined;
-  }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
+  }, [
+    selectedCodexFastModeEnabled,
+    selectedEffort,
+    selectedProvider,
+    settings.webGpuPreferredDtype,
+    supportsReasoningEffort,
+  ]);
   const providerOptionsForDispatch = useMemo(() => {
+    if (selectedProvider !== "codex") {
+      return undefined;
+    }
     if (!settings.codexBinaryPath && !settings.codexHomePath) {
       return undefined;
     }
@@ -1430,12 +1474,43 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
       },
     };
-  }, [settings.codexBinaryPath, settings.codexHomePath]);
+  }, [selectedProvider, settings.codexBinaryPath, settings.codexHomePath]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () => getCustomModelOptionsByProvider(settings, builtInModelOptionsByProvider.copilot),
     [builtInModelOptionsByProvider.copilot, settings],
   );
+  const localWebGpuUnavailableMessage =
+    selectedProvider !== "webgpu"
+      ? null
+      : !settings.webGpuEnabled
+      ? "Enable Local WebGPU in Settings to use the browser-side adapter."
+      : localWebGpuStatus.supportMessage;
+  const localWebGpuStatusMessage =
+    selectedProvider !== "webgpu"
+      ? null
+      : localWebGpuUnavailableMessage ??
+        (composerImages.length > 0
+          ? "Image attachments are not supported for local WebGPU turns yet."
+          : localWebGpuStatus.phase === "loading-model"
+            ? localWebGpuStatus.progress?.total && localWebGpuStatus.progress.total > 0
+              ? `Loading local model… ${Math.max(
+                  0,
+                  Math.min(
+                    100,
+                    Math.round(
+                      (localWebGpuStatus.progress.loaded / localWebGpuStatus.progress.total) * 100,
+                    ),
+                  ),
+                )}%`
+              : "Loading local model…"
+            : localWebGpuStatus.phase === "generating"
+              ? "Running locally on this device."
+              : localWebGpuStatus.lastError);
+  const isLocalWebGpuAttachmentUnsupported =
+    selectedProvider === "webgpu" && composerImages.length > 0;
+  const disableLocalWebGpuSend =
+    Boolean(localWebGpuUnavailableMessage) || isLocalWebGpuAttachmentUnsupported;
   const selectedModelForPickerWithCustomFallback = useMemo(() => {
     const currentOptions = modelOptionsByProvider[selectedProvider];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -3099,6 +3174,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     if (!trimmed && composerImages.length === 0) return;
     if (!activeProject) return;
+    if (localWebGpuUnavailableMessage) {
+      setStoreThreadError(activeThread.id, localWebGpuUnavailableMessage);
+      return;
+    }
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -3212,7 +3291,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       let threadCreateModel: ModelSlug =
         selectedModel || (activeProject.model as ModelSlug) || DEFAULT_MODEL_BY_PROVIDER.codex;
 
-      if (isLocalDraftThread) {
+      const shouldCreateServerThreadForDraft = isLocalDraftThread && selectedProvider !== "webgpu";
+      if (shouldCreateServerThreadForDraft) {
         await api.orchestration.dispatchCommand({
           type: "thread.create",
           commandId: newCommandId(),
@@ -3256,7 +3336,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       // Auto-title from first message
-      if (isFirstMessage && isServerThread) {
+      if (isFirstMessage && isServerThread && selectedProvider !== "webgpu") {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
           commandId: newCommandId(),
@@ -3265,7 +3345,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
       }
 
-      if (isServerThread) {
+      if (isServerThread && selectedProvider !== "webgpu") {
         await persistThreadSettingsForNextTurn({
           threadId: threadIdForSend,
           createdAt: messageCreatedAt,
@@ -3519,6 +3599,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ) {
         return;
       }
+      if (localWebGpuUnavailableMessage) {
+        setThreadError(activeThread.id, localWebGpuUnavailableMessage);
+        return;
+      }
 
       const trimmed = text.trim();
       if (!trimmed) {
@@ -3616,6 +3700,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftInteractionMode,
       setThreadError,
       settings.enableAssistantStreaming,
+      localWebGpuUnavailableMessage,
     ],
   );
 
@@ -3631,6 +3716,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isConnecting ||
       sendInFlightRef.current
     ) {
+      return;
+    }
+    if (localWebGpuUnavailableMessage) {
+      setStoreThreadError(activeThread.id, localWebGpuUnavailableMessage);
       return;
     }
 
@@ -3651,6 +3740,60 @@ export default function ChatView({ threadId }: ChatViewProps) {
       sendInFlightRef.current = false;
       resetSendPhase();
     };
+
+    if (selectedProvider === "webgpu") {
+      setProjectDraftThreadId(activeProject.id, nextThreadId, {
+        branch: activeThread.branch,
+        worktreePath: activeThread.worktreePath,
+        createdAt,
+        envMode: activeThread.worktreePath ? "worktree" : "local",
+        runtimeMode,
+        interactionMode: "default",
+      });
+      setComposerDraftProvider(nextThreadId, "webgpu");
+      setComposerDraftModel(nextThreadId, nextThreadModel, "webgpu");
+      await api.orchestration
+        .dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: nextThreadId,
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: implementationPrompt,
+            attachments: [],
+          },
+          provider: "webgpu",
+          model: nextThreadModel,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode: "default",
+          createdAt,
+        })
+        .then(() => {
+          clearDraftThread(nextThreadId);
+          planSidebarOpenOnNextThreadRef.current = true;
+          return navigate({
+            to: "/$threadId",
+            params: { threadId: nextThreadId },
+          });
+        })
+        .catch((err) => {
+          clearProjectDraftThreadById(activeProject.id, nextThreadId);
+          clearDraftThread(nextThreadId);
+          toastManager.add({
+            type: "error",
+            title: "Could not start implementation thread",
+            description:
+              err instanceof Error ? err.message : "An error occurred while creating the new thread.",
+          });
+        })
+        .then(finish, finish);
+      return;
+    }
 
     await api.orchestration
       .dispatchCommand({
@@ -3734,11 +3877,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     runtimeMode,
     selectedModel,
     selectedModelOptionsForDispatch,
-    providerOptionsForDispatch,
-    selectedProvider,
-    settings.enableAssistantStreaming,
-    syncServerReadModel,
-  ]);
+      providerOptionsForDispatch,
+      selectedProvider,
+      setComposerDraftModel,
+      setComposerDraftProvider,
+      setProjectDraftThreadId,
+      settings.enableAssistantStreaming,
+      syncServerReadModel,
+      clearDraftThread,
+      clearProjectDraftThreadById,
+      localWebGpuUnavailableMessage,
+      setStoreThreadError,
+    ]);
 
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: ModelSlug) => {
@@ -3752,7 +3902,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         activeThread.id,
         resolveAppModelSelection(
           provider,
-          provider === "copilot" ? settings.customCopilotModels : settings.customCodexModels,
+          provider === "copilot"
+            ? settings.customCopilotModels
+            : provider === "webgpu"
+              ? settings.customWebGpuModels
+              : settings.customCodexModels,
           model,
           builtInModelOptionsByProvider[provider],
         ),
@@ -3768,6 +3922,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setComposerDraftProvider,
       settings.customCopilotModels,
       settings.customCodexModels,
+      settings.customWebGpuModels,
     ],
   );
   const onEffortSelect = useCallback(
@@ -4314,6 +4469,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   />
                 </div>
 
+                {localWebGpuStatusMessage ? (
+                  <div className="px-2.5 pb-2 sm:px-3">
+                    <div className="flex items-start gap-2 rounded-lg border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                      <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+                      <span>{localWebGpuStatusMessage}</span>
+                    </div>
+                  </div>
+                ) : null}
+
                 {/* Bottom toolbar */}
                 {activePendingApproval ? (
                   <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
@@ -4536,21 +4700,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       ) : pendingUserInputs.length === 0 ? (
                         showPlanFollowUpPrompt ? (
                           prompt.trim().length > 0 ? (
-                            <Button
-                              type="submit"
-                              size="sm"
-                              className="h-9 rounded-full px-4 sm:h-8"
-                              disabled={isSendBusy || isConnecting}
-                            >
-                              {isConnecting || isSendBusy ? "Sending..." : "Refine"}
-                            </Button>
+                              <Button
+                                type="submit"
+                                size="sm"
+                                className="h-9 rounded-full px-4 sm:h-8"
+                                disabled={isSendBusy || isConnecting || disableLocalWebGpuSend}
+                              >
+                                {isConnecting || isSendBusy ? "Sending..." : "Refine"}
+                              </Button>
                           ) : (
                             <div className="flex items-center">
                               <Button
                                 type="submit"
                                 size="sm"
                                 className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-                                disabled={isSendBusy || isConnecting}
+                                disabled={isSendBusy || isConnecting || disableLocalWebGpuSend}
                               >
                                 {isConnecting || isSendBusy ? "Sending..." : "Implement"}
                               </Button>
@@ -4562,7 +4726,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                       variant="default"
                                       className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                                       aria-label="Implementation actions"
-                                      disabled={isSendBusy || isConnecting}
+                                      disabled={isSendBusy || isConnecting || disableLocalWebGpuSend}
                                     />
                                   }
                                 >
@@ -4586,6 +4750,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             disabled={
                               isSendBusy ||
                               isConnecting ||
+                              disableLocalWebGpuSend ||
                               (!prompt.trim() && composerImages.length === 0)
                             }
                             aria-label={
@@ -6170,6 +6335,7 @@ function getCustomModelOptionsByProvider(
   settings: {
     customCodexModels: readonly string[];
     customCopilotModels: readonly string[];
+    customWebGpuModels: readonly string[];
   },
   builtInCopilotOptions: ReadonlyArray<BuiltInAppModelOption>,
 ): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
@@ -6181,12 +6347,14 @@ function getCustomModelOptionsByProvider(
       undefined,
       builtInCopilotOptions,
     ),
+    webgpu: getAppModelOptions("webgpu", settings.customWebGpuModels),
   };
 }
 
-const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
+const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon | LucideIcon> = {
   codex: OpenAI,
   copilot: GitHubIcon,
+  webgpu: HuggingFaceIcon,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };

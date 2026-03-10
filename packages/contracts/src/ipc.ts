@@ -24,7 +24,11 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerHuggingFaceModelSearchInput,
+  ServerHuggingFaceModelSearchResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -156,6 +160,9 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    searchHuggingFaceModels: (
+      input: ServerHuggingFaceModelSearchInput,
+    ) => Promise<ServerHuggingFaceModelSearchResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
