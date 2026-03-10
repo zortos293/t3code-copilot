@@ -897,7 +897,7 @@ export const ComposerPromptEditor = forwardRef<
     () => ({
       namespace: "t3tools-composer-editor",
       editable: true,
-      nodes: [ComposerMentionNode],
+      nodes: [ComposerMentionNode, ComposerSkillNode],
       editorState: () => {
         $setComposerEditorPrompt(initialValueRef.current);
       },

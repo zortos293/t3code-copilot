@@ -2,9 +2,8 @@
  * SkillsManager - Service for listing, toggling, searching, installing, and
  * uninstalling agent skills.
  *
- * Skills are installed globally at `~/.agents/skills/<name>/` and enabled per
- * platform via `[[skills.config]]` entries in each platform's config file
- * (e.g. `~/.codex/config.toml`).
+ * Skills are enabled when their directory lives under `~/.agents/skills/<name>/`
+ * and disabled when moved to `~/.t3/disabledSkills/<name>/`.
  *
  * @module SkillsManager
  */
@@ -53,61 +52,19 @@ export class SkillsManager extends ServiceMap.Service<SkillsManager, SkillsManag
   "t3/skills/SkillsManager",
 ) {}
 
-// ── Platform configuration ──────────────────────────────────────────
-//
-// Each entry maps a display name to:
-//   - `cliFlag`: the value passed to `npx skills add -a <flag>`
-//   - `configPath`: the platform's config file (TOML) where
-//     `[[skills.config]]` entries control enabled/disabled state
-//
-// To add a new platform (ex. Claude Code), append an entry here.
-
 const home = os.homedir();
-
-interface SkillsPlatform {
-  readonly name: string;
-  readonly cliFlag: string;
-  readonly configPath: string;
-}
-
-const SKILLS_PLATFORMS: readonly SkillsPlatform[] = [
-  { name: "Codex", cliFlag: "codex", configPath: path.join(home, ".codex", "config.toml") },
-];
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-const AGENTS_SKILLS_DIR = path.join(home, ".agents", "skills");
+const ENABLED_SKILLS_DIR = path.join(home, ".agents", "skills");
+const DISABLED_SKILLS_DIR = path.join(home, ".t3", "disabledSkills");
 
 const VALID_SKILL_SLUG = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const SKILLS_SEARCH_TIMEOUT_MS = 5_000;
-const configWriteLocks = new Map<string, Promise<void>>();
 
 function assertValidSkillSlug(name: string): void {
   if (!VALID_SKILL_SLUG.test(name)) {
     throw new Error(`Invalid skill name: ${name}`);
-  }
-}
-
-function escapeTomlBasicString(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
-}
-
-async function withConfigWriteLock<T>(configPath: string, operation: () => Promise<T>): Promise<T> {
-  const previous = configWriteLocks.get(configPath) ?? Promise.resolve();
-  let releaseCurrent!: () => void;
-  const current = new Promise<void>((resolve) => {
-    releaseCurrent = resolve;
-  });
-  const queued = previous.catch(() => undefined).then(() => current);
-  configWriteLocks.set(configPath, queued);
-  await previous.catch(() => undefined);
-  try {
-    return await operation();
-  } finally {
-    releaseCurrent();
-    if (configWriteLocks.get(configPath) === queued) {
-      configWriteLocks.delete(configPath);
-    }
   }
 }
 
@@ -152,91 +109,66 @@ function resolveSkillMdPath(skillDir: string): string | undefined {
   return undefined;
 }
 
-/**
- * Parse all `[[skills.config]]` entries from a TOML config file.
- * Returns a map of SKILL.md path → enabled boolean.
- *
- * We parse only `[[skills.config]]` blocks without a full TOML parser
- * because the format is simple and predictable.
- */
-function readSkillsConfigEntries(configPath: string): Map<string, boolean> {
-  const entries = new Map<string, boolean>();
-  let content: string;
+type SkillDirectoryState = {
+  readonly enabled: boolean;
+  readonly skillDir: string;
+};
+
+async function pathExists(candidatePath: string): Promise<boolean> {
   try {
-    content = fs.readFileSync(configPath, "utf-8");
+    await fsp.access(candidatePath);
+    return true;
   } catch {
-    return entries;
+    return false;
   }
-  content = content.replaceAll("\r\n", "\n");
-
-  // Match each [[skills.config]] block: grab text until the next [[...]] header or EOF.
-  const blockRe = /^\[\[skills\.config\]\]\s*\n((?:(?!\[).*\n?)*)/gm;
-  let m: RegExpExecArray | null;
-  while ((m = blockRe.exec(content)) !== null) {
-    const block = m[1]!;
-    const pathMatch = block.match(/^path\s*=\s*"((?:\\.|[^"\\])*)"/m);
-    const enabledMatch = block.match(/^enabled\s*=\s*(true|false)/m);
-    if (pathMatch) {
-      // Unescape TOML basic string sequences relevant to file paths
-      const unescapedPath = pathMatch[1]!.replace(/\\\\/g, "\\").replace(/\\"/g, '"');
-      entries.set(unescapedPath, enabledMatch ? enabledMatch[1] === "true" : true);
-    }
-  }
-  return entries;
 }
 
-/**
- * Write/update a `[[skills.config]]` entry in a TOML config file.
- * If `enabled` is true, removes any existing disabled entry.
- * If `enabled` is false, adds or updates the entry with `enabled = false`.
- */
-async function writeSkillConfigEntry(
-  configPath: string,
-  skillMdPath: string,
-  enabled: boolean,
-): Promise<void> {
-  await withConfigWriteLock(configPath, async () => {
-    let content: string;
+async function resolveSkillDirectoryState(skillName: string): Promise<SkillDirectoryState | undefined> {
+  const enabledSkillDir = path.join(ENABLED_SKILLS_DIR, skillName);
+  if (await pathExists(enabledSkillDir)) {
+    return { enabled: true, skillDir: enabledSkillDir };
+  }
+
+  const disabledSkillDir = path.join(DISABLED_SKILLS_DIR, skillName);
+  if (await pathExists(disabledSkillDir)) {
+    return { enabled: false, skillDir: disabledSkillDir };
+  }
+
+  return undefined;
+}
+
+async function moveSkillDirectory(sourceDir: string, destinationDir: string): Promise<void> {
+  await fsp.mkdir(path.dirname(destinationDir), { recursive: true });
+  await fsp.rename(sourceDir, destinationDir);
+}
+
+async function listSkillDirectoryStates(): Promise<SkillDirectoryState[]> {
+  const states: SkillDirectoryState[] = [];
+  const seenNames = new Set<string>();
+
+  for (const [rootDir, enabled] of [
+    [ENABLED_SKILLS_DIR, true],
+    [DISABLED_SKILLS_DIR, false],
+  ] as const) {
+    let dirEntries: fs.Dirent[];
     try {
-      content = await fsp.readFile(configPath, "utf-8");
+      dirEntries = await fsp.readdir(rootDir, { withFileTypes: true });
     } catch {
-      content = "";
+      continue;
     }
 
-    const tomlSafeSkillMdPath = escapeTomlBasicString(skillMdPath);
-    const escapedPath = tomlSafeSkillMdPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const entryRe = new RegExp(
-      `\\[\\[skills\\.config\\]\\]\\s*\\r?\\npath\\s*=\\s*"${escapedPath}"\\s*\\r?\\nenabled\\s*=\\s*(?:true|false)\\s*\\r?\\n?`,
-      "g",
-    );
-    const cleaned = content.replace(entryRe, "");
-    const entry = `\n[[skills.config]]\npath = "${tomlSafeSkillMdPath}"\nenabled = false\n`;
-    const nextContent = enabled ? cleaned : cleaned + entry;
-    const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
-
-    await fsp.mkdir(path.dirname(configPath), { recursive: true });
-    await fsp.writeFile(tempPath, nextContent);
-    await fsp.rename(tempPath, configPath);
-  });
-}
-
-/** Check which configured platforms have this skill enabled. */
-function resolveSkillAgents(
-  skillMdPath: string | undefined,
-  configEntriesByPath: ReadonlyMap<string, ReadonlyMap<string, boolean>>,
-): string[] {
-  if (!skillMdPath) return [];
-
-  const agents: string[] = [];
-  for (const platform of SKILLS_PLATFORMS) {
-    const entries = configEntriesByPath.get(platform.configPath);
-    // Skill is enabled unless explicitly disabled in the config
-    const entry = entries?.get(skillMdPath);
-    if (entry !== false) {
-      agents.push(platform.name);
+    for (const entry of dirEntries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      if (seenNames.has(entry.name)) continue;
+      seenNames.add(entry.name);
+      states.push({
+        enabled,
+        skillDir: path.join(rootDir, entry.name),
+      });
     }
   }
-  return agents;
+
+  return states;
 }
 
 /** Run a CLI command and return stdout. */
@@ -252,29 +184,16 @@ function runCommand(
   });
 }
 
-/** Read all installed skills from ~/.agents/skills/ */
+/** Read all installed skills from the enabled and disabled skill roots. */
 function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
       const skills: SkillMetadata[] = [];
-      const configEntriesByPath = new Map(
-        SKILLS_PLATFORMS.map((platform) => [
-          platform.configPath,
-          readSkillsConfigEntries(platform.configPath),
-        ]),
-      );
+      const directoryStates = await listSkillDirectoryStates();
 
-      let dirEntries: fs.Dirent[];
-      try {
-        dirEntries = await fsp.readdir(AGENTS_SKILLS_DIR, { withFileTypes: true });
-      } catch {
-        return { skills } satisfies SkillsListResult;
-      }
-
-      for (const entry of dirEntries) {
-        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-
-        const skillDir = path.join(AGENTS_SKILLS_DIR, entry.name);
+      for (const directoryState of directoryStates) {
+        const skillName = path.basename(directoryState.skillDir);
+        const skillDir = directoryState.skillDir;
         const skillMdPath = resolveSkillMdPath(skillDir);
 
         let content = "";
@@ -287,13 +206,11 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
         }
 
         const { description } = parseSkillFrontmatter(content);
-
-        // Skill is enabled unless explicitly disabled in a platform config.
-        const agents = resolveSkillAgents(skillMdPath, configEntriesByPath);
-        const enabled = agents.length > 0;
+        const enabled = directoryState.enabled;
+        const agents = enabled ? ["Codex"] : [];
 
         skills.push({
-          name: entry.name,
+          name: skillName,
           description,
           enabled,
           agents,
@@ -308,20 +225,25 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
   });
 }
 
-/** Toggle a skill on or off for all configured platforms via config.toml. */
+/** Toggle a skill by moving its directory between the enabled and disabled roots. */
 function toggleSkill(input: SkillsToggleInput): Effect.Effect<SkillsToggleResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
       assertValidSkillSlug(input.skillName);
-      const skillDir = path.join(AGENTS_SKILLS_DIR, input.skillName);
-      const skillMdPath = resolveSkillMdPath(skillDir);
-      if (!skillMdPath) {
-        throw new Error(`No SKILL.md found for ${input.skillName}`);
+      const skillState = await resolveSkillDirectoryState(input.skillName);
+      if (!skillState) {
+        throw new Error(`Skill not found: ${input.skillName}`);
+      }
+      if (skillState.enabled === input.enabled) {
+        return { skillName: input.skillName, enabled: input.enabled } satisfies SkillsToggleResult;
       }
 
-      for (const platform of SKILLS_PLATFORMS) {
-        await writeSkillConfigEntry(platform.configPath, skillMdPath, input.enabled);
+      const destinationRootDir = input.enabled ? ENABLED_SKILLS_DIR : DISABLED_SKILLS_DIR;
+      const destinationDir = path.join(destinationRootDir, input.skillName);
+      if (await pathExists(destinationDir)) {
+        throw new Error(`Destination already exists for skill: ${input.skillName}`);
       }
+      await moveSkillDirectory(skillState.skillDir, destinationDir);
 
       return { skillName: input.skillName, enabled: input.enabled } satisfies SkillsToggleResult;
     },
@@ -367,7 +289,7 @@ function searchSkills(input: SkillsSearchInput): Effect.Effect<SkillsSearchResul
   });
 }
 
-/** Install a skill from skills.sh for all configured platforms. */
+/** Install a skill from skills.sh into the enabled skills directory. */
 function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallResult, SkillsError> {
   try {
     assertValidSkillSlug(input.skillName);
@@ -377,10 +299,9 @@ function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallRes
       message: error instanceof Error ? error.message : `Invalid skill name: ${input.skillName}`,
     } satisfies SkillsInstallResult);
   }
-  const agentFlags = SKILLS_PLATFORMS.flatMap((p) => ["-a", p.cliFlag]);
   return runCommand(
     "npx",
-    ["skills", "add", input.source, "-s", input.skillName, "-g", ...agentFlags, "-y"],
+    ["skills", "add", input.source, "-s", input.skillName, "-g", "-y"],
     120_000,
   ).pipe(
     Effect.map(() => ({
@@ -396,25 +317,38 @@ function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallRes
   );
 }
 
-/** Uninstall a skill globally. */
+/** Uninstall a skill by removing it from both enabled and disabled storage. */
 function uninstallSkill(input: SkillsUninstallInput): Effect.Effect<SkillsUninstallResult, SkillsError> {
-  try {
-    assertValidSkillSlug(input.skillName);
-  } catch (error) {
-    return Effect.succeed({
-      success: false,
-      message: error instanceof Error ? error.message : `Invalid skill name: ${input.skillName}`,
-    } satisfies SkillsUninstallResult);
-  }
-  return runCommand(
-    "npx",
-    ["skills", "remove", input.skillName, "-g", "-y"],
-    120_000,
-  ).pipe(
-    Effect.map(() => ({
-      success: true,
-      message: `Successfully uninstalled ${input.skillName}`,
-    }) satisfies SkillsUninstallResult),
+  return Effect.tryPromise({
+    try: async () => {
+      assertValidSkillSlug(input.skillName);
+      const candidates = [
+        path.join(ENABLED_SKILLS_DIR, input.skillName),
+        path.join(DISABLED_SKILLS_DIR, input.skillName),
+      ];
+      let removedAny = false;
+
+      for (const candidate of candidates) {
+        if (!(await pathExists(candidate))) continue;
+        await fsp.rm(candidate, { recursive: true, force: false });
+        removedAny = true;
+      }
+
+      if (!removedAny) {
+        return {
+          success: false,
+          message: `Skill not found: ${input.skillName}`,
+        } satisfies SkillsUninstallResult;
+      }
+
+      return {
+        success: true,
+        message: `Successfully uninstalled ${input.skillName}`,
+      } satisfies SkillsUninstallResult;
+    },
+    catch: (cause) =>
+      new SkillsError({ message: `Failed to uninstall skill: ${input.skillName}`, cause }),
+  }).pipe(
     Effect.catch((error: SkillsError) =>
       Effect.succeed({
         success: false,
@@ -429,8 +363,11 @@ function readContent(input: SkillsReadContentInput): Effect.Effect<SkillsReadCon
   return Effect.tryPromise({
     try: async () => {
       assertValidSkillSlug(input.skillName);
-      const skillDir = path.join(AGENTS_SKILLS_DIR, input.skillName);
-      const skillMdPath = resolveSkillMdPath(skillDir);
+      const skillState = await resolveSkillDirectoryState(input.skillName);
+      if (!skillState) {
+        throw new Error(`Skill not found: ${input.skillName}`);
+      }
+      const skillMdPath = resolveSkillMdPath(skillState.skillDir);
       if (!skillMdPath) {
         throw new Error(`No SKILL.md found for ${input.skillName}`);
       }

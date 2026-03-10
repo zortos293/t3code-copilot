@@ -1812,7 +1812,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const isSkillTrigger = composerTriggerKind === "slash-skill";
-  const skillsQuery = useQuery({ ...skillsListQueryOptions(), enabled: isSkillTrigger });
+  const skillsQuery = useQuery({ ...skillsListQueryOptions(), enabled: isSkillTrigger && isElectron });
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
