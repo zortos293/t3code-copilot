@@ -1,4 +1,5 @@
 import type {
+  ExecutionEnvironment,
   ProviderKind,
   ProviderSessionRuntimeStatus,
   RuntimeMode,
@@ -20,6 +21,7 @@ export interface ProviderRuntimeBinding {
   readonly resumeCursor?: unknown | null;
   readonly runtimePayload?: unknown | null;
   readonly runtimeMode?: RuntimeMode;
+  readonly executionEnvironment?: ExecutionEnvironment;
 }
 
 export type ProviderSessionDirectoryReadError = ProviderSessionDirectoryPersistenceError;

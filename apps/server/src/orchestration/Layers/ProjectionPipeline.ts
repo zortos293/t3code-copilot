@@ -422,6 +422,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             title: event.payload.title,
             model: event.payload.model,
             runtimeMode: event.payload.runtimeMode,
+            executionEnvironment: event.payload.executionEnvironment ?? "host",
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
@@ -462,6 +463,21 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             runtimeMode: event.payload.runtimeMode,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.execution-environment-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            executionEnvironment: event.payload.executionEnvironment ?? "host",
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -759,6 +775,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
         status: event.payload.session.status,
         providerName: event.payload.session.providerName,
         runtimeMode: event.payload.session.runtimeMode,
+        executionEnvironment: event.payload.session.executionEnvironment ?? "host",
         activeTurnId: event.payload.session.activeTurnId,
         lastError: event.payload.session.lastError,
         updatedAt: event.payload.session.updatedAt,

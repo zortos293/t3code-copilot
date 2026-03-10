@@ -1,7 +1,12 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import {
+  DEFAULT_EXECUTION_ENVIRONMENT,
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type Thread,
+} from "./types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -12,6 +17,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     title: "Thread",
     model: "gpt-5.3-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,
+    executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],

@@ -67,6 +67,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
                   provider,
                   adapterKey: value.adapterKey,
                   runtimeMode: value.runtimeMode,
+                  executionEnvironment: value.executionEnvironment,
                   status: value.status,
                   resumeCursor: value.resumeCursor,
                   runtimePayload: value.runtimePayload,
@@ -102,6 +103,8 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           binding.adapterKey ??
           (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
+        executionEnvironment:
+          binding.executionEnvironment ?? existingRuntime?.executionEnvironment ?? "host",
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
         resumeCursor:

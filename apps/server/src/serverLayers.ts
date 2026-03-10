@@ -25,6 +25,7 @@ import { makeProviderServiceLive } from "./provider/Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger";
+import { DockerThreadManagerLive } from "./docker/Layers/DockerThreadManager";
 
 import { TerminalManagerLive } from "./terminal/Layers/Manager";
 import { KeybindingsLive } from "./keybindings";
@@ -57,7 +58,7 @@ export function makeServerProviderLayer(): Layer.Layer<
     );
     const codexAdapterLayer = makeCodexAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
+    ).pipe(Layer.provideMerge(DockerThreadManagerLive));
     const copilotAdapterLayer = makeCopilotAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
@@ -111,6 +112,7 @@ export function makeServerRuntimeServicesLayer() {
   );
 
   const terminalLayer = TerminalManagerLive.pipe(
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(
       typeof Bun !== "undefined" && process.platform !== "win32"
         ? BunPtyAdapterLive

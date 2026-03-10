@@ -42,6 +42,9 @@ export const ProviderSandboxMode = Schema.Literals([
   "danger-full-access",
 ]);
 export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
+export const ExecutionEnvironment = Schema.Literals(["host", "docker"]);
+export type ExecutionEnvironment = typeof ExecutionEnvironment.Type;
+export const DEFAULT_EXECUTION_ENVIRONMENT: ExecutionEnvironment = "host";
 export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyString),
@@ -53,9 +56,31 @@ export const CopilotProviderStartOptions = Schema.Struct({
   configDir: Schema.optional(TrimmedNonEmptyString),
 });
 export type CopilotProviderStartOptions = typeof CopilotProviderStartOptions.Type;
+export const DockerProviderNetworkMode = Schema.Literals(["none", "bridge"]);
+export type DockerProviderNetworkMode = typeof DockerProviderNetworkMode.Type;
+export const DockerProviderStartOptions = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  image: Schema.optional(TrimmedNonEmptyString),
+  workspacePath: Schema.optional(TrimmedNonEmptyString),
+  network: Schema.optional(DockerProviderNetworkMode),
+});
+export type DockerProviderStartOptions = typeof DockerProviderStartOptions.Type;
+export const DockerExecutionMetadata = Schema.Struct({
+  containerName: TrimmedNonEmptyString,
+  image: TrimmedNonEmptyString,
+  workspacePath: TrimmedNonEmptyString,
+  hostWorkspacePath: TrimmedNonEmptyString,
+  network: DockerProviderNetworkMode,
+});
+export type DockerExecutionMetadata = typeof DockerExecutionMetadata.Type;
+export const ExecutionMetadata = Schema.Struct({
+  docker: Schema.optional(DockerExecutionMetadata),
+});
+export type ExecutionMetadata = typeof ExecutionMetadata.Type;
 export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
   copilot: Schema.optional(CopilotProviderStartOptions),
+  docker: Schema.optional(DockerProviderStartOptions),
 });
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
@@ -192,6 +217,9 @@ export const OrchestrationSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
   updatedAt: IsoDateTime,
@@ -264,6 +292,9 @@ export const OrchestrationThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -323,6 +354,9 @@ const ThreadCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -355,6 +389,14 @@ const ThreadRuntimeModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadExecutionEnvironmentSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.execution-environment.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  executionEnvironment: ExecutionEnvironment,
+  createdAt: IsoDateTime,
+});
+
 const ThreadInteractionModeSetCommand = Schema.Struct({
   type: Schema.Literal("thread.interaction-mode.set"),
   commandId: CommandId,
@@ -379,6 +421,9 @@ export const ThreadTurnStartCommand = Schema.Struct({
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -401,6 +446,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode,
+  executionEnvironment: ExecutionEnvironment,
   interactionMode: ProviderInteractionMode,
   createdAt: IsoDateTime,
 });
@@ -454,6 +500,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
+  ThreadExecutionEnvironmentSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
@@ -473,6 +520,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
+  ThreadExecutionEnvironmentSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
@@ -573,6 +621,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.deleted",
   "thread.meta-updated",
   "thread.runtime-mode-set",
+  "thread.execution-environment-set",
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
@@ -623,6 +672,9 @@ export const ThreadCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -649,6 +701,14 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
 export const ThreadRuntimeModeSetPayload = Schema.Struct({
   threadId: ThreadId,
   runtimeMode: RuntimeMode,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadExecutionEnvironmentSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   updatedAt: IsoDateTime,
 });
 
@@ -681,6 +741,9 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
@@ -805,6 +868,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.runtime-mode-set"),
     payload: ThreadRuntimeModeSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.execution-environment-set"),
+    payload: ThreadExecutionEnvironmentSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

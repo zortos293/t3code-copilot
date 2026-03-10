@@ -95,6 +95,7 @@ function toRuntimePayloadFromSession(
     model: session.model ?? null,
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
+    executionMetadata: session.executionMetadata ?? null,
     ...(extra?.providerOptions !== undefined ? { providerOptions: extra.providerOptions } : {}),
   };
 }
@@ -106,6 +107,18 @@ function readPersistedProviderOptions(
     return undefined;
   }
   const raw = "providerOptions" in runtimePayload ? runtimePayload.providerOptions : undefined;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  return raw as Record<string, unknown>;
+}
+
+function readPersistedExecutionMetadata(
+  runtimePayload: ProviderRuntimeBinding["runtimePayload"],
+): Record<string, unknown> | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const raw =
+    "executionMetadata" in runtimePayload ? runtimePayload.executionMetadata : undefined;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   return raw as Record<string, unknown>;
 }
@@ -156,6 +169,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         threadId,
         provider: session.provider,
         runtimeMode: session.runtimeMode,
+        executionEnvironment: session.executionEnvironment ?? "host",
         status: toRuntimeStatus(session),
         ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
         runtimePayload: toRuntimePayloadFromSession(session, extra),
@@ -214,6 +228,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
         const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
         const persistedProviderOptions = readPersistedProviderOptions(input.binding.runtimePayload);
+        const persistedExecutionMetadata = readPersistedExecutionMetadata(input.binding.runtimePayload);
 
         const resumed = yield* adapter.startSession({
           threadId: input.binding.threadId,
@@ -222,21 +237,30 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           ...(persistedProviderOptions ? { providerOptions: persistedProviderOptions } : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
+          executionEnvironment: input.binding.executionEnvironment ?? "host",
         });
-        if (resumed.provider !== adapter.provider) {
+        const session =
+          persistedExecutionMetadata !== undefined && resumed.executionMetadata === undefined
+            ? {
+                ...resumed,
+                executionMetadata:
+                  persistedExecutionMetadata as NonNullable<typeof resumed.executionMetadata>,
+              }
+            : resumed;
+        if (session.provider !== adapter.provider) {
           return yield* toValidationError(
             input.operation,
-            `Adapter/provider mismatch while recovering thread '${input.binding.threadId}'. Expected '${adapter.provider}', received '${resumed.provider}'.`,
+            `Adapter/provider mismatch while recovering thread '${input.binding.threadId}'. Expected '${adapter.provider}', received '${session.provider}'.`,
           );
         }
 
-        yield* upsertSessionBinding(resumed, input.binding.threadId);
+        yield* upsertSessionBinding(session, input.binding.threadId);
         yield* analytics.record("provider.session.recovered", {
-          provider: resumed.provider,
+          provider: session.provider,
           strategy: "resume-thread",
-          hasResumeCursor: resumed.resumeCursor !== undefined,
+          hasResumeCursor: session.resumeCursor !== undefined,
         });
-        return { adapter, session: resumed } as const;
+        return { adapter, session } as const;
       });
 
     const resolveRoutableSession = (input: {
@@ -299,6 +323,7 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
           runtimeMode: input.runtimeMode,
+          executionEnvironment: input.executionEnvironment,
           hasResumeCursor: session.resumeCursor !== undefined,
           hasCwd: typeof input.cwd === "string" && input.cwd.trim().length > 0,
           hasModel: typeof input.model === "string" && input.model.trim().length > 0,

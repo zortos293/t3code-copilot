@@ -7,6 +7,7 @@
  * @module ProjectionThreadSessionRepository
  */
 import {
+  ExecutionEnvironment,
   RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
@@ -23,6 +24,7 @@ export const ProjectionThreadSession = Schema.Struct({
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(Schema.String),
   runtimeMode: RuntimeMode,
+  executionEnvironment: ExecutionEnvironment,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),
   updatedAt: IsoDateTime,

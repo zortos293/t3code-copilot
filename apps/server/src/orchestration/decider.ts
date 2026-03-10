@@ -158,6 +158,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           title: command.title,
           model: command.model,
           runtimeMode: command.runtimeMode,
+          executionEnvironment: command.executionEnvironment,
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
@@ -238,6 +239,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.execution-environment.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = nowIso();
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.execution-environment-set",
+        payload: {
+          threadId: command.threadId,
+          executionEnvironment: command.executionEnvironment,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
     case "thread.interaction-mode.set": {
       yield* requireThread({
         readModel,
@@ -309,6 +333,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           runtimeMode:
             readModel.threads.find((entry) => entry.id === command.threadId)?.runtimeMode ??
             command.runtimeMode,
+          executionEnvironment:
+            readModel.threads.find((entry) => entry.id === command.threadId)
+              ?.executionEnvironment ?? command.executionEnvironment,
           interactionMode:
             readModel.threads.find((entry) => entry.id === command.threadId)?.interactionMode ??
             command.interactionMode,

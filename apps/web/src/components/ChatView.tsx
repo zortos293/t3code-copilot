@@ -1,6 +1,7 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
+  type ExecutionEnvironment,
   EDITORS,
   type EditorId,
   type KeybindingCommand,
@@ -105,6 +106,7 @@ import {
 } from "../proposedPlan";
 import { truncateTitle } from "../truncateTitle";
 import {
+  DEFAULT_EXECUTION_ENVIRONMENT,
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -790,6 +792,7 @@ function buildLocalDraftThread(
     title: "New thread",
     model: fallbackModel,
     runtimeMode: draftThread.runtimeMode,
+    executionEnvironment: draftThread.executionEnvironment,
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
@@ -1054,6 +1057,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setComposerDraftProvider = useComposerDraftStore((store) => store.setProvider);
   const setComposerDraftModel = useComposerDraftStore((store) => store.setModel);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
+  const setComposerDraftExecutionEnvironment = useComposerDraftStore(
+    (store) => store.setExecutionEnvironment,
+  );
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
@@ -1212,6 +1218,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const runtimeMode =
     composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const executionEnvironment =
+    composerDraft.executionEnvironment ??
+    activeThread?.executionEnvironment ??
+    DEFAULT_EXECUTION_ENVIRONMENT;
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
@@ -1242,7 +1252,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, []);
 
   const openOrReuseProjectDraftThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      envMode: DraftThreadEnvMode;
+      executionEnvironment?: ExecutionEnvironment;
+    }) => {
       if (!activeProject) {
         throw new Error("No active project is available for this pull request.");
       }
@@ -1268,12 +1283,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       clearProjectDraftThreadId(activeProject.id);
       const nextThreadId = newThreadId();
-      setProjectDraftThreadId(activeProject.id, nextThreadId, {
-        createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        interactionMode: DEFAULT_INTERACTION_MODE,
-        ...input,
-      });
+        setProjectDraftThreadId(activeProject.id, nextThreadId, {
+          createdAt: new Date().toISOString(),
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          ...input,
+        });
       await navigate({
         to: "/$threadId",
         params: { threadId: nextThreadId },
@@ -1293,11 +1309,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const handlePreparedPullRequestThread = useCallback(
-    async (input: { branch: string; worktreePath: string | null }) => {
+    async (input: {
+      branch: string;
+      worktreePath: string | null;
+      executionEnvironment: ExecutionEnvironment;
+    }) => {
       await openOrReuseProjectDraftThread({
         branch: input.branch,
         worktreePath: input.worktreePath,
         envMode: input.worktreePath ? "worktree" : "local",
+        executionEnvironment: input.executionEnvironment,
       });
     },
     [openOrReuseProjectDraftThread],
@@ -1333,6 +1354,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ? (sessionProvider ?? selectedProviderByThreadId ?? null)
     : null;
   const selectedProvider: ProviderKind = lockedProvider ?? selectedProviderByThreadId ?? "codex";
+  const supportsDockerExecution = settings.dockerThreadsEnabled && selectedProvider === "codex";
+  const effectiveExecutionEnvironment =
+    supportsDockerExecution || executionEnvironment === "host" ? executionEnvironment : "host";
   const providerStatuses = serverConfigQuery.data?.providers ?? EMPTY_PROVIDER_STATUSES;
   const copilotProviderStatus =
     providerStatuses.find((status) => status.provider === "copilot") ?? null;
@@ -1425,16 +1449,36 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return undefined;
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
   const providerOptionsForDispatch = useMemo(() => {
-    if (!settings.codexBinaryPath && !settings.codexHomePath) {
+    const codexOptions = {
+      ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
+      ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
+    };
+    const dockerOptions =
+      effectiveExecutionEnvironment === "docker"
+        ? {
+            enabled: true,
+            ...(settings.dockerImage ? { image: settings.dockerImage } : {}),
+            ...(settings.dockerWorkspacePath
+              ? { workspacePath: settings.dockerWorkspacePath }
+              : {}),
+            ...(settings.dockerNetworkMode ? { network: settings.dockerNetworkMode } : {}),
+          }
+        : undefined;
+    if (Object.keys(codexOptions).length === 0 && !dockerOptions) {
       return undefined;
     }
     return {
-      codex: {
-        ...(settings.codexBinaryPath ? { binaryPath: settings.codexBinaryPath } : {}),
-        ...(settings.codexHomePath ? { homePath: settings.codexHomePath } : {}),
-      },
+      ...(Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : {}),
+      ...(dockerOptions ? { docker: dockerOptions } : {}),
     };
-  }, [settings.codexBinaryPath, settings.codexHomePath]);
+  }, [
+    effectiveExecutionEnvironment,
+    settings.codexBinaryPath,
+    settings.codexHomePath,
+    settings.dockerImage,
+    settings.dockerNetworkMode,
+    settings.dockerWorkspacePath,
+  ]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByProvider = useMemo(
     () => getCustomModelOptionsByProvider(settings, builtInModelOptionsByProvider.copilot),
@@ -2262,6 +2306,30 @@ export default function ChatView({ threadId }: ChatViewProps) {
     ],
   );
 
+  const handleExecutionEnvironmentChange = useCallback(
+    (nextEnvironment: ExecutionEnvironment) => {
+      if (nextEnvironment === effectiveExecutionEnvironment) return;
+      if (nextEnvironment === "docker" && !supportsDockerExecution) {
+        scheduleComposerFocus();
+        return;
+      }
+      setComposerDraftExecutionEnvironment(threadId, nextEnvironment);
+      if (isLocalDraftThread) {
+        setDraftThreadContext(threadId, { executionEnvironment: nextEnvironment });
+      }
+      scheduleComposerFocus();
+    },
+    [
+      effectiveExecutionEnvironment,
+      isLocalDraftThread,
+      scheduleComposerFocus,
+      setComposerDraftExecutionEnvironment,
+      setDraftThreadContext,
+      supportsDockerExecution,
+      threadId,
+    ],
+  );
+
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
       if (mode === interactionMode) return;
@@ -2308,6 +2376,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       createdAt: string;
       model?: string;
       runtimeMode: RuntimeMode;
+      executionEnvironment: ExecutionEnvironment;
       interactionMode: ProviderInteractionMode;
     }) => {
       if (!serverThread) {
@@ -2333,6 +2402,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
           commandId: newCommandId(),
           threadId: input.threadId,
           runtimeMode: input.runtimeMode,
+          createdAt: input.createdAt,
+        });
+      }
+
+      if (input.executionEnvironment !== serverThread.executionEnvironment) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.execution-environment.set",
+          commandId: newCommandId(),
+          threadId: input.threadId,
+          executionEnvironment: input.executionEnvironment,
           createdAt: input.createdAt,
         });
       }
@@ -3225,6 +3304,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           title,
           model: threadCreateModel,
           runtimeMode,
+          executionEnvironment: effectiveExecutionEnvironment,
           interactionMode,
           branch: nextThreadBranch,
           worktreePath: nextThreadWorktreePath,
@@ -3275,6 +3355,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: messageCreatedAt,
           ...(selectedModel ? { model: selectedModel } : {}),
           runtimeMode,
+          executionEnvironment: effectiveExecutionEnvironment,
           interactionMode,
         });
       }
@@ -3299,6 +3380,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         provider: selectedProvider,
         assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
         runtimeMode,
+        executionEnvironment: effectiveExecutionEnvironment,
         interactionMode,
         createdAt: messageCreatedAt,
       });
@@ -3555,6 +3637,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: messageCreatedAt,
           ...(selectedModel ? { model: selectedModel } : {}),
           runtimeMode,
+          executionEnvironment: effectiveExecutionEnvironment,
           interactionMode: nextInteractionMode,
         });
 
@@ -3580,6 +3663,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
+          executionEnvironment: effectiveExecutionEnvironment,
           interactionMode: nextInteractionMode,
           createdAt: messageCreatedAt,
         });
@@ -3613,6 +3697,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       resetSendPhase,
       runtimeMode,
+      effectiveExecutionEnvironment,
       selectedModel,
       selectedModelOptionsForDispatch,
       providerOptionsForDispatch,
@@ -3665,6 +3750,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         title: nextThreadTitle,
         model: nextThreadModel,
         runtimeMode,
+        executionEnvironment: effectiveExecutionEnvironment,
         interactionMode: "default",
         branch: activeThread.branch,
         worktreePath: activeThread.worktreePath,
@@ -3689,6 +3775,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
           assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
           runtimeMode,
+          executionEnvironment: effectiveExecutionEnvironment,
           interactionMode: "default",
           createdAt,
         });
@@ -3736,6 +3823,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     navigate,
     resetSendPhase,
     runtimeMode,
+    effectiveExecutionEnvironment,
     selectedModel,
     selectedModelOptionsForDispatch,
     providerOptionsForDispatch,
@@ -3752,6 +3840,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return;
       }
       setComposerDraftProvider(activeThread.id, provider);
+      if (provider !== "codex") {
+        setComposerDraftExecutionEnvironment(activeThread.id, "host");
+        if (isLocalDraftThread) {
+          setDraftThreadContext(activeThread.id, { executionEnvironment: "host" });
+        }
+      }
       setComposerDraftModel(
         activeThread.id,
         resolveAppModelSelection(
@@ -3766,10 +3860,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [
       activeThread,
       builtInModelOptionsByProvider,
+      isLocalDraftThread,
       lockedProvider,
       scheduleComposerFocus,
+      setComposerDraftExecutionEnvironment,
       setComposerDraftModel,
       setComposerDraftProvider,
+      setDraftThreadContext,
       settings.customCopilotModels,
       settings.customCodexModels,
     ],
@@ -4377,21 +4474,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             onClick={toggleInteractionMode}
                           />
                           <CompactComposerControlsMenu
-                            activePlan={Boolean(
-                              activePlan || activeProposedPlan || planSidebarOpen,
-                            )}
-                            interactionMode={interactionMode}
-                            planSidebarOpen={planSidebarOpen}
-                            runtimeMode={runtimeMode}
-                            selectedEffort={selectedEffort}
-                            selectedProvider={selectedProvider}
-                            selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
+                             activePlan={Boolean(
+                               activePlan || activeProposedPlan || planSidebarOpen,
+                             )}
+                             executionEnvironment={effectiveExecutionEnvironment}
+                             interactionMode={interactionMode}
+                             planSidebarOpen={planSidebarOpen}
+                             runtimeMode={runtimeMode}
+                             supportsDockerExecution={supportsDockerExecution}
+                             selectedEffort={selectedEffort}
+                             selectedProvider={selectedProvider}
+                             selectedCodexFastModeEnabled={selectedCodexFastModeEnabled}
                             reasoningOptions={reasoningOptions}
                             onEffortSelect={onEffortSelect}
-                            onCodexFastModeChange={onCodexFastModeChange}
-                            onToggleInteractionMode={toggleInteractionMode}
-                            onTogglePlanSidebar={togglePlanSidebar}
-                            onToggleRuntimeMode={toggleRuntimeMode}
+                             onCodexFastModeChange={onCodexFastModeChange}
+                             onExecutionEnvironmentChange={handleExecutionEnvironmentChange}
+                             onToggleInteractionMode={toggleInteractionMode}
+                             onTogglePlanSidebar={togglePlanSidebar}
+                             onToggleRuntimeMode={toggleRuntimeMode}
                           />
                         </>
                       ) : (
@@ -4458,6 +4558,33 @@ export default function ChatView({ threadId }: ChatViewProps) {
                               {runtimeMode === "full-access" ? "Full access" : "Supervised"}
                             </span>
                           </Button>
+
+                          {settings.dockerThreadsEnabled || effectiveExecutionEnvironment === "docker" ? (
+                            <Button
+                              variant="ghost"
+                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                              size="sm"
+                              type="button"
+                              onClick={() =>
+                                void handleExecutionEnvironmentChange(
+                                  effectiveExecutionEnvironment === "docker" ? "host" : "docker",
+                                )
+                              }
+                              disabled={
+                                effectiveExecutionEnvironment !== "docker" &&
+                                !supportsDockerExecution
+                              }
+                              title={
+                                effectiveExecutionEnvironment === "docker"
+                                  ? "Running in Docker — click to switch to host"
+                                  : supportsDockerExecution
+                                    ? "Running on host — click to switch to Docker"
+                                    : "Docker execution is only available for Codex threads"
+                              }
+                            >
+                              <span>{effectiveExecutionEnvironment === "docker" ? "Docker" : "Host"}</span>
+                            </Button>
+                          ) : null}
 
                           {activePlan || activeProposedPlan || planSidebarOpen ? (
                             <>
@@ -4677,6 +4804,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
               open
               cwd={activeProject?.cwd ?? null}
               initialReference={pullRequestDialogState.initialReference}
+              dockerEnabled={supportsDockerExecution}
+              initialExecutionEnvironment={effectiveExecutionEnvironment}
               onOpenChange={(open) => {
                 if (!open) {
                   closePullRequestDialog();
@@ -6523,15 +6652,18 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
 const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
+  executionEnvironment: ExecutionEnvironment;
   interactionMode: ProviderInteractionMode;
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
+  supportsDockerExecution: boolean;
   selectedEffort: CodexReasoningEffort | null;
   selectedProvider: ProviderKind;
   selectedCodexFastModeEnabled: boolean;
   reasoningOptions: ReadonlyArray<CodexReasoningEffort>;
   onEffortSelect: (effort: CodexReasoningEffort) => void;
   onCodexFastModeChange: (enabled: boolean) => void;
+  onExecutionEnvironmentChange: (environment: ExecutionEnvironment) => void;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
   onToggleRuntimeMode: () => void;
@@ -6610,6 +6742,34 @@ const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(pr
           </MenuRadioGroup>
         </MenuGroup>
         <MenuDivider />
+        {(props.supportsDockerExecution || props.executionEnvironment === "docker") && (
+          <>
+            <MenuGroup>
+              <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+                Environment
+              </div>
+              <MenuRadioGroup
+                value={props.executionEnvironment}
+                onValueChange={(value) => {
+                  if (
+                    !value ||
+                    value === props.executionEnvironment ||
+                    (value === "docker" && !props.supportsDockerExecution)
+                  ) {
+                    return;
+                  }
+                  props.onExecutionEnvironmentChange(value as ExecutionEnvironment);
+                }}
+              >
+                <MenuRadioItem value="host">Host</MenuRadioItem>
+                <MenuRadioItem value="docker" disabled={!props.supportsDockerExecution}>
+                  Docker
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuGroup>
+            <MenuDivider />
+          </>
+        )}
         <MenuGroup>
           <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
           <MenuRadioGroup

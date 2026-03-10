@@ -42,6 +42,8 @@ export interface TerminalSessionState {
   unsubscribeExit: (() => void) | null;
   hasRunningSubprocess: boolean;
   runtimeEnv: Record<string, string> | null;
+  executionTargetKey: string;
+  supportsSubprocessPolling: boolean;
 }
 
 export interface ShellCandidate {
@@ -52,6 +54,20 @@ export interface ShellCandidate {
 export interface TerminalStartInput extends TerminalOpenInput {
   cols: number;
   rows: number;
+}
+
+export interface TerminalExecutionTargetInput {
+  threadId: string;
+  cwd: string;
+  runtimeEnv: Record<string, string> | null;
+}
+
+export interface TerminalExecutionTarget {
+  key: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  shellCandidates?: ShellCandidate[];
+  supportsSubprocessPolling?: boolean;
 }
 
 /**

@@ -275,12 +275,14 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           thread.model,
         ),
         runtimeMode: thread.runtimeMode,
+        executionEnvironment: thread.executionEnvironment ?? "host",
         interactionMode: thread.interactionMode,
         session: thread.session
           ? {
               provider: toLegacyProvider(thread.session.providerName),
               status: toLegacySessionStatus(thread.session.status),
               orchestrationStatus: thread.session.status,
+              executionEnvironment: thread.session.executionEnvironment ?? "host",
               activeTurnId: thread.session.activeTurnId ?? undefined,
               createdAt: thread.session.updatedAt,
               updatedAt: thread.session.updatedAt,

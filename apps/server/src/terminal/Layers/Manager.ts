@@ -16,10 +16,14 @@ import {
 import { Effect, Encoding, Layer, Path, Schema } from "effect";
 
 import { createLogger } from "../../logger";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery";
+import { ProviderService } from "../../provider/Services/ProviderService";
 import { PtyAdapter, PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
 import { runProcess } from "../../processRunner";
 import { ServerConfig } from "../../config";
 import {
+  type TerminalExecutionTarget,
+  type TerminalExecutionTargetInput,
   ShellCandidate,
   TerminalError,
   TerminalManager,
@@ -45,6 +49,9 @@ const decodeTerminalClearInput = Schema.decodeUnknownSync(TerminalClearInput);
 const decodeTerminalCloseInput = Schema.decodeUnknownSync(TerminalCloseInput);
 
 type TerminalSubprocessChecker = (terminalPid: number) => Promise<boolean>;
+type TerminalExecutionResolver = (
+  input: TerminalExecutionTargetInput,
+) => Promise<TerminalExecutionTarget>;
 
 function defaultShellResolver(): string {
   if (process.platform === "win32") {
@@ -116,6 +123,89 @@ function resolveShellCandidates(shellResolver: () => string): ShellCandidate[] {
     shellCandidateFromCommand("bash"),
     shellCandidateFromCommand("sh"),
   ]);
+}
+
+function toDockerExecShellCandidate(params: {
+  containerName: string;
+  cwd: string;
+  command: string;
+  args?: string[];
+  runtimeEnv: Record<string, string> | null;
+}): ShellCandidate {
+  const dockerArgs = ["exec", "-it", "-w", params.cwd];
+  if (params.runtimeEnv) {
+    for (const [key, value] of Object.entries(params.runtimeEnv)) {
+      dockerArgs.push("-e", `${key}=${value}`);
+    }
+  }
+  dockerArgs.push(params.containerName, params.command, ...(params.args ?? []));
+  return {
+    shell: "docker",
+    args: dockerArgs,
+  };
+}
+
+function buildDockerShellCandidates(params: {
+  containerName: string;
+  cwd: string;
+  shellResolver: () => string;
+  runtimeEnv: Record<string, string> | null;
+}): ShellCandidate[] {
+  const candidates: Array<{ command: string; args?: string[] }> = [];
+  const requested = normalizeShellCommand(params.shellResolver());
+  const requestedBase = requested ? path.posix.basename(requested) : null;
+  if (requestedBase && requestedBase.length > 0) {
+    candidates.push({
+      command: requestedBase,
+      ...(requestedBase === "zsh" ? { args: ["-o", "nopromptsp"] } : {}),
+    });
+  }
+  candidates.push(
+    { command: "/bin/zsh", args: ["-o", "nopromptsp"] },
+    { command: "/bin/bash" },
+    { command: "/bin/sh" },
+    { command: "zsh", args: ["-o", "nopromptsp"] },
+    { command: "bash" },
+    { command: "sh" },
+  );
+
+  return uniqueShellCandidates(
+    candidates.map((candidate) =>
+      toDockerExecShellCandidate({
+        containerName: params.containerName,
+        cwd: params.cwd,
+        command: candidate.command,
+        ...(candidate.args ? { args: candidate.args } : {}),
+        runtimeEnv: params.runtimeEnv,
+      }),
+    ),
+  );
+}
+
+function mapHostCwdToContainerCwd(params: {
+  cwd: string;
+  hostWorkspacePath: string;
+  containerWorkspacePath: string;
+}): string {
+  const relativePath = path.relative(params.hostWorkspacePath, params.cwd);
+  if (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error(
+      `Terminal cwd '${params.cwd}' is outside the Docker workspace '${params.hostWorkspacePath}'.`,
+    );
+  }
+
+  if (relativePath.length === 0 || relativePath === ".") {
+    return params.containerWorkspacePath;
+  }
+
+  return path.posix.join(
+    params.containerWorkspacePath,
+    relativePath.split(path.sep).join(path.posix.sep),
+  );
 }
 
 function isRetryableShellSpawnError(error: unknown): boolean {
@@ -317,6 +407,7 @@ interface TerminalManagerOptions {
   historyLineLimit?: number;
   ptyAdapter: PtyAdapterShape;
   shellResolver?: () => string;
+  resolveExecutionTarget?: TerminalExecutionResolver;
   subprocessChecker?: TerminalSubprocessChecker;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
@@ -329,6 +420,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   private readonly historyLineLimit: number;
   private readonly ptyAdapter: PtyAdapterShape;
   private readonly shellResolver: () => string;
+  private readonly resolveExecutionTarget: TerminalExecutionResolver;
   private readonly persistQueues = new Map<string, Promise<void>>();
   private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingPersistHistory = new Map<string, string>();
@@ -349,6 +441,14 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     this.historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
     this.ptyAdapter = options.ptyAdapter;
     this.shellResolver = options.shellResolver ?? defaultShellResolver;
+    this.resolveExecutionTarget =
+      options.resolveExecutionTarget ??
+      (async ({ cwd, runtimeEnv }) => ({
+        key: "host",
+        cwd,
+        env: createTerminalSpawnEnv(process.env, runtimeEnv),
+        supportsSubprocessPolling: true,
+      }));
     this.persistDebounceMs = DEFAULT_PERSIST_DEBOUNCE_MS;
     this.subprocessChecker = options.subprocessChecker ?? defaultSubprocessChecker;
     this.subprocessPollIntervalMs =
@@ -363,6 +463,12 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     const input = decodeTerminalOpenInput(raw);
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
+      const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
+      const executionTarget = await this.resolveExecutionTarget({
+        threadId: input.threadId,
+        cwd: input.cwd,
+        runtimeEnv: nextRuntimeEnv,
+      });
 
       const sessionKey = toSessionKey(input.threadId, input.terminalId);
       const existing = this.sessions.get(sessionKey);
@@ -387,29 +493,35 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           unsubscribeData: null,
           unsubscribeExit: null,
           hasRunningSubprocess: false,
-          runtimeEnv: normalizedRuntimeEnv(input.env),
+          runtimeEnv: nextRuntimeEnv,
+          executionTargetKey: executionTarget.key,
+          supportsSubprocessPolling: executionTarget.supportsSubprocessPolling ?? true,
         };
         this.sessions.set(sessionKey, session);
         this.evictInactiveSessionsIfNeeded();
-        await this.startSession(session, { ...input, cols, rows }, "started");
+        await this.startSession(session, { ...input, cols, rows }, executionTarget, "started");
         return this.snapshot(session);
       }
 
-      const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
       const currentRuntimeEnv = existing.runtimeEnv;
       const targetCols = input.cols ?? existing.cols;
       const targetRows = input.rows ?? existing.rows;
       const runtimeEnvChanged =
         JSON.stringify(currentRuntimeEnv) !== JSON.stringify(nextRuntimeEnv);
+      const executionTargetChanged = existing.executionTargetKey !== executionTarget.key;
 
-      if (existing.cwd !== input.cwd || runtimeEnvChanged) {
+      if (existing.cwd !== input.cwd || runtimeEnvChanged || executionTargetChanged) {
         this.stopProcess(existing);
         existing.cwd = input.cwd;
         existing.runtimeEnv = nextRuntimeEnv;
+        existing.executionTargetKey = executionTarget.key;
+        existing.supportsSubprocessPolling = executionTarget.supportsSubprocessPolling ?? true;
         existing.history = "";
         await this.persistHistory(existing.threadId, existing.terminalId, existing.history);
       } else if (existing.status === "exited" || existing.status === "error") {
         existing.runtimeEnv = nextRuntimeEnv;
+        existing.executionTargetKey = executionTarget.key;
+        existing.supportsSubprocessPolling = executionTarget.supportsSubprocessPolling ?? true;
         existing.history = "";
         await this.persistHistory(existing.threadId, existing.terminalId, existing.history);
       } else if (currentRuntimeEnv !== nextRuntimeEnv) {
@@ -420,6 +532,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         await this.startSession(
           existing,
           { ...input, cols: targetCols, rows: targetRows },
+          executionTarget,
           "started",
         );
         return this.snapshot(existing);
@@ -484,6 +597,12 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     const input = decodeTerminalRestartInput(raw);
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
+      const runtimeEnv = normalizedRuntimeEnv(input.env);
+      const executionTarget = await this.resolveExecutionTarget({
+        threadId: input.threadId,
+        cwd: input.cwd,
+        runtimeEnv,
+      });
 
       const sessionKey = toSessionKey(input.threadId, input.terminalId);
       let session = this.sessions.get(sessionKey);
@@ -506,14 +625,18 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           unsubscribeData: null,
           unsubscribeExit: null,
           hasRunningSubprocess: false,
-          runtimeEnv: normalizedRuntimeEnv(input.env),
+          runtimeEnv,
+          executionTargetKey: executionTarget.key,
+          supportsSubprocessPolling: executionTarget.supportsSubprocessPolling ?? true,
         };
         this.sessions.set(sessionKey, session);
         this.evictInactiveSessionsIfNeeded();
       } else {
         this.stopProcess(session);
         session.cwd = input.cwd;
-        session.runtimeEnv = normalizedRuntimeEnv(input.env);
+        session.runtimeEnv = runtimeEnv;
+        session.executionTargetKey = executionTarget.key;
+        session.supportsSubprocessPolling = executionTarget.supportsSubprocessPolling ?? true;
       }
 
       const cols = input.cols ?? session.cols;
@@ -521,7 +644,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
       session.history = "";
       await this.persistHistory(input.threadId, input.terminalId, session.history);
-      await this.startSession(session, { ...input, cols, rows }, "restarted");
+      await this.startSession(session, { ...input, cols, rows }, executionTarget, "restarted");
       return this.snapshot(session);
     });
   }
@@ -575,6 +698,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
   private async startSession(
     session: TerminalSessionState,
     input: TerminalStartInput,
+    executionTarget: TerminalExecutionTarget,
     eventType: "started" | "restarted",
   ): Promise<void> {
     this.stopProcess(session);
@@ -592,7 +716,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     let startedShell: string | null = null;
     try {
       const shellCandidates = resolveShellCandidates(this.shellResolver);
-      const terminalEnv = createTerminalSpawnEnv(process.env, session.runtimeEnv);
+      const candidateList = executionTarget.shellCandidates ?? shellCandidates;
+      const terminalEnv = executionTarget.env;
       let lastSpawnError: unknown = null;
 
       const spawnWithCandidate = (candidate: ShellCandidate) =>
@@ -600,7 +725,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           this.ptyAdapter.spawn({
             shell: candidate.shell,
             ...(candidate.args ? { args: candidate.args } : {}),
-            cwd: session.cwd,
+            cwd: executionTarget.cwd,
             cols: session.cols,
             rows: session.rows,
             env: terminalEnv,
@@ -631,7 +756,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         }
       };
 
-      const spawnResult = await trySpawn(shellCandidates);
+      const spawnResult = await trySpawn(candidateList);
       if (spawnResult) {
         ptyProcess = spawnResult.process;
         startedShell = spawnResult.shellLabel;
@@ -641,8 +766,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         const detail =
           lastSpawnError instanceof Error ? lastSpawnError.message : "Terminal start failed";
         const tried =
-          shellCandidates.length > 0
-            ? ` Tried shells: ${shellCandidates.map((candidate) => formatShellCandidate(candidate)).join(", ")}.`
+          candidateList.length > 0
+            ? ` Tried shells: ${candidateList.map((candidate) => formatShellCandidate(candidate)).join(", ")}.`
             : "";
         throw new Error(`${detail}.${tried}`.trim());
       }
@@ -650,6 +775,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       session.process = ptyProcess;
       session.pid = ptyProcess.pid;
       session.status = "running";
+      session.executionTargetKey = executionTarget.key;
+      session.supportsSubprocessPolling = executionTarget.supportsSubprocessPolling ?? true;
       session.updatedAt = new Date().toISOString();
       session.unsubscribeData = ptyProcess.onData((data) => {
         this.onProcessData(session, data);
@@ -974,7 +1101,10 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
   private updateSubprocessPollingState(): void {
     const hasRunningSessions = [...this.sessions.values()].some(
-      (session) => session.status === "running" && session.pid !== null,
+      (session) =>
+        session.status === "running" &&
+        session.pid !== null &&
+        session.supportsSubprocessPolling,
     );
     if (hasRunningSessions) {
       this.ensureSubprocessPolling();
@@ -1003,7 +1133,9 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 
     const runningSessions = [...this.sessions.values()].filter(
       (session): session is TerminalSessionState & { pid: number } =>
-        session.status === "running" && Number.isInteger(session.pid),
+        session.status === "running" &&
+        Number.isInteger(session.pid) &&
+        session.supportsSubprocessPolling,
     );
     if (runningSessions.length === 0) {
       this.stopSubprocessPolling();
@@ -1177,8 +1309,64 @@ export const TerminalManagerLive = Layer.effect(
     const logsDir = join(stateDir, "logs", "terminals");
 
     const ptyAdapter = yield* PtyAdapter;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const providerService = yield* ProviderService;
+    const resolveExecutionTarget: TerminalExecutionResolver = async ({
+      threadId,
+      cwd,
+      runtimeEnv,
+    }) => {
+      const snapshot = await Effect.runPromise(projectionSnapshotQuery.getSnapshot());
+      const thread = snapshot.threads.find((candidate) => candidate.id === threadId);
+      const desiredExecutionEnvironment =
+        thread?.session?.executionEnvironment ?? thread?.executionEnvironment ?? "host";
+      if (desiredExecutionEnvironment !== "docker") {
+        return {
+          key: "host",
+          cwd,
+          env: createTerminalSpawnEnv(process.env, runtimeEnv),
+          supportsSubprocessPolling: true,
+        };
+      }
+
+      const sessions = await Effect.runPromise(providerService.listSessions());
+      const dockerSession = sessions.find(
+        (session) => session.threadId === threadId && session.executionEnvironment === "docker",
+      );
+      const dockerMetadata = dockerSession?.executionMetadata?.docker;
+      if (
+        !dockerMetadata?.containerName ||
+        !dockerMetadata.hostWorkspacePath ||
+        !dockerMetadata.workspacePath
+      ) {
+        throw new Error(
+          "Docker terminal requires an active Docker-backed session with execution metadata.",
+        );
+      }
+
+      return {
+        key: `docker:${dockerMetadata.containerName}:${dockerMetadata.workspacePath}`,
+        cwd: mapHostCwdToContainerCwd({
+          cwd,
+          hostWorkspacePath: dockerMetadata.hostWorkspacePath,
+          containerWorkspacePath: dockerMetadata.workspacePath,
+        }),
+        env: process.env,
+        shellCandidates: buildDockerShellCandidates({
+          containerName: dockerMetadata.containerName,
+          cwd: mapHostCwdToContainerCwd({
+            cwd,
+            hostWorkspacePath: dockerMetadata.hostWorkspacePath,
+            containerWorkspacePath: dockerMetadata.workspacePath,
+          }),
+          shellResolver: defaultShellResolver,
+          runtimeEnv,
+        }),
+        supportsSubprocessPolling: false,
+      };
+    };
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() => new TerminalManagerRuntime({ logsDir, ptyAdapter })),
+      Effect.sync(() => new TerminalManagerRuntime({ logsDir, ptyAdapter, resolveExecutionTarget })),
       (r) => Effect.sync(() => r.dispose()),
     );
 

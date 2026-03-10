@@ -8,7 +8,12 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import {
+  DEFAULT_EXECUTION_ENVIRONMENT,
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type Thread,
+} from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -18,6 +23,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     title: "Thread",
     model: "gpt-5-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,
+    executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
     interactionMode: DEFAULT_INTERACTION_MODE,
     session: null,
     messages: [],
@@ -57,6 +63,7 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
     title: "Thread",
     model: "gpt-5.3-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,
+    executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
     interactionMode: DEFAULT_INTERACTION_MODE,
     branch: null,
     worktreePath: null,
@@ -214,6 +221,7 @@ describe("store read model sync", () => {
           status: "ready",
           providerName: "copilot",
           runtimeMode: DEFAULT_RUNTIME_MODE,
+          executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
           activeTurnId: null,
           lastError: null,
           updatedAt: "2026-02-27T00:00:00.000Z",

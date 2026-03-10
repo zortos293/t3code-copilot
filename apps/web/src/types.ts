@@ -1,4 +1,5 @@
 import type {
+  ExecutionEnvironment,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
@@ -16,6 +17,7 @@ import type {
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+export const DEFAULT_EXECUTION_ENVIRONMENT: ExecutionEnvironment = "host";
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
@@ -90,6 +92,7 @@ export interface Thread {
   title: string;
   model: string;
   runtimeMode: RuntimeMode;
+  executionEnvironment: ExecutionEnvironment;
   interactionMode: ProviderInteractionMode;
   session: ThreadSession | null;
   messages: ChatMessage[];
@@ -107,6 +110,7 @@ export interface Thread {
 export interface ThreadSession {
   provider: ProviderKind;
   status: SessionPhase | "error" | "closed";
+  executionEnvironment: ExecutionEnvironment;
   activeTurnId?: TurnId | undefined;
   createdAt: string;
   updatedAt: string;

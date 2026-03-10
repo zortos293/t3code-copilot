@@ -98,6 +98,10 @@ function SettingsRouteView() {
 
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
+  const dockerThreadsEnabled = settings.dockerThreadsEnabled;
+  const dockerImage = settings.dockerImage;
+  const dockerWorkspacePath = settings.dockerWorkspacePath;
+  const dockerNetworkMode = settings.dockerNetworkMode;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
 
   const openKeybindingsFile = useCallback(() => {
@@ -300,6 +304,134 @@ function SettingsRouteView() {
                     }
                   >
                     Reset codex overrides
+                  </Button>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Docker threads</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Run supported Codex threads inside a local Docker container with the selected repo
+                  checkout bind-mounted into the container.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-xl border border-border bg-background/50 px-4 py-3">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">Enable Docker execution</p>
+                    <p className="text-xs text-muted-foreground">
+                      When disabled, Docker stays hidden in thread controls.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={dockerThreadsEnabled}
+                    onCheckedChange={(checked) => updateSettings({ dockerThreadsEnabled: checked })}
+                    aria-label="Enable Docker thread execution"
+                  />
+                </div>
+
+                <label htmlFor="docker-image" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">Docker image</span>
+                  <Input
+                    id="docker-image"
+                    value={dockerImage}
+                    onChange={(event) => updateSettings({ dockerImage: event.target.value })}
+                    placeholder="ghcr.io/your-org/t3code-codex:latest"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Required for Docker-backed Codex sessions.
+                  </span>
+                </label>
+
+                <label htmlFor="docker-workspace-path" className="block space-y-1">
+                  <span className="text-xs font-medium text-foreground">
+                    Container workspace path
+                  </span>
+                  <Input
+                    id="docker-workspace-path"
+                    value={dockerWorkspacePath}
+                    onChange={(event) =>
+                      updateSettings({ dockerWorkspacePath: event.target.value || "/workspace" })
+                    }
+                    placeholder="/workspace"
+                    spellCheck={false}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    Where the selected repo checkout is mounted inside the container.
+                  </span>
+                </label>
+
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-foreground">Network access</span>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {[
+                      {
+                        value: "none",
+                        label: "Disabled",
+                        description: "Default. Blocks outbound container networking.",
+                      },
+                      {
+                        value: "bridge",
+                        label: "Bridge",
+                        description: "Allows standard Docker bridge networking.",
+                      },
+                    ].map((option) => {
+                      const selected = dockerNetworkMode === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors ${
+                            selected
+                              ? "border-primary/60 bg-primary/8 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-accent"
+                          }`}
+                          onClick={() =>
+                            updateSettings({
+                              dockerNetworkMode: option.value as "none" | "bridge",
+                            })
+                          }
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-sm font-medium">{option.label}</span>
+                            <span className="text-xs">{option.description}</span>
+                          </span>
+                          {selected ? (
+                            <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                              Selected
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p>Current image</p>
+                    <p className="mt-1 break-all font-mono text-[11px] text-foreground">
+                      {dockerImage || "Not configured"}
+                    </p>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="self-start"
+                    onClick={() =>
+                      updateSettings({
+                        dockerThreadsEnabled: defaults.dockerThreadsEnabled,
+                        dockerImage: defaults.dockerImage,
+                        dockerWorkspacePath: defaults.dockerWorkspacePath,
+                        dockerNetworkMode: defaults.dockerNetworkMode,
+                      })
+                    }
+                  >
+                    Reset Docker settings
                   </Button>
                 </div>
               </div>

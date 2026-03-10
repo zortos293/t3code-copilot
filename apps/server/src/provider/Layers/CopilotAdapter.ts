@@ -94,6 +94,7 @@ interface ActiveCopilotSession extends CopilotTurnTrackingState {
   readonly threadId: ThreadId;
   readonly createdAt: string;
   readonly runtimeMode: ProviderSession["runtimeMode"];
+  readonly executionEnvironment: ProviderSession["executionEnvironment"];
   cwd: string | undefined;
   configDir: string | undefined;
   model: string | undefined;
@@ -412,6 +413,7 @@ function createSessionRecord(input: {
   readonly client: CopilotClientHandle;
   readonly session: CopilotSessionHandle;
   readonly runtimeMode: ProviderSession["runtimeMode"];
+  readonly executionEnvironment: ProviderSession["executionEnvironment"];
   readonly pendingApprovalResolvers: Map<string, PendingApprovalRequest>;
   readonly pendingUserInputResolvers: Map<string, PendingUserInputRequest>;
   readonly cwd: string | undefined;
@@ -425,6 +427,7 @@ function createSessionRecord(input: {
     threadId: input.threadId,
     createdAt: new Date().toISOString(),
     runtimeMode: input.runtimeMode,
+    executionEnvironment: input.executionEnvironment,
     cwd: input.cwd,
     configDir: input.configDir,
     model: input.model,
@@ -1251,6 +1254,13 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             issue: `Expected provider '${PROVIDER}', received '${input.provider}'.`,
           });
         }
+        if (input.executionEnvironment === "docker") {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "GitHub Copilot sessions do not yet support Docker execution.",
+          });
+        }
 
         const existing = sessions.get(input.threadId);
         if (existing) {
@@ -1258,6 +1268,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             provider: PROVIDER,
             status: "ready",
             runtimeMode: existing.runtimeMode,
+            executionEnvironment: existing.executionEnvironment,
             ...(existing.cwd ? { cwd: existing.cwd } : {}),
             ...(existing.model ? { model: existing.model } : {}),
             threadId: input.threadId,
@@ -1333,6 +1344,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           client,
           session,
           runtimeMode: input.runtimeMode,
+          executionEnvironment: input.executionEnvironment,
           pendingApprovalResolvers,
           pendingUserInputResolvers,
           cwd: input.cwd,
@@ -1376,6 +1388,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           provider: PROVIDER,
           status: "ready",
           runtimeMode: input.runtimeMode,
+          executionEnvironment: input.executionEnvironment,
           ...(input.cwd ? { cwd: input.cwd } : {}),
           ...(input.model ? { model: input.model } : {}),
           threadId: input.threadId,
@@ -1575,6 +1588,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               provider: PROVIDER,
               status: record.currentTurnId ? "running" : "ready",
               runtimeMode: record.runtimeMode,
+              executionEnvironment: record.executionEnvironment,
               threadId: record.threadId,
               resumeCursor: record.session.sessionId,
               createdAt: record.createdAt,

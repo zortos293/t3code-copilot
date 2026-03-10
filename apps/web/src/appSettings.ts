@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@t3tools/contracts";
+import { type DockerProviderNetworkMode, type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
@@ -17,6 +17,18 @@ const AppSettingsSchema = Schema.Struct({
   ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  dockerThreadsEnabled: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(false)),
+  ),
+  dockerImage: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  dockerWorkspacePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withConstructorDefault(() => Option.some("/workspace")),
+  ),
+  dockerNetworkMode: Schema.Literals(["none", "bridge"]).pipe(
+    Schema.withConstructorDefault(() => Option.some("none" satisfies DockerProviderNetworkMode)),
   ),
   copilotCliPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),

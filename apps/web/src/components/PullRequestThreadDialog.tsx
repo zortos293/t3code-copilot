@@ -1,4 +1,4 @@
-import type { GitResolvePullRequestResult } from "@t3tools/contracts";
+import type { ExecutionEnvironment, GitResolvePullRequestResult } from "@t3tools/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -26,14 +26,22 @@ interface PullRequestThreadDialogProps {
   open: boolean;
   cwd: string | null;
   initialReference: string | null;
+  dockerEnabled: boolean;
+  initialExecutionEnvironment: ExecutionEnvironment;
   onOpenChange: (open: boolean) => void;
-  onPrepared: (input: { branch: string; worktreePath: string | null }) => Promise<void> | void;
+  onPrepared: (input: {
+    branch: string;
+    worktreePath: string | null;
+    executionEnvironment: ExecutionEnvironment;
+  }) => Promise<void> | void;
 }
 
 export function PullRequestThreadDialog({
   open,
   cwd,
   initialReference,
+  dockerEnabled,
+  initialExecutionEnvironment,
   onOpenChange,
   onPrepared,
 }: PullRequestThreadDialogProps) {
@@ -42,6 +50,8 @@ export function PullRequestThreadDialog({
   const [reference, setReference] = useState(initialReference ?? "");
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [preparingMode, setPreparingMode] = useState<"local" | "worktree" | null>(null);
+  const [executionEnvironment, setExecutionEnvironment] =
+    useState<ExecutionEnvironment>(initialExecutionEnvironment);
   const [debouncedReference, referenceDebouncer] = useDebouncedValue(
     reference,
     { wait: 450 },
@@ -53,7 +63,8 @@ export function PullRequestThreadDialog({
     setReference(initialReference ?? "");
     setReferenceDirty(false);
     setPreparingMode(null);
-  }, [initialReference, open]);
+    setExecutionEnvironment(initialExecutionEnvironment);
+  }, [initialExecutionEnvironment, initialReference, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -134,6 +145,7 @@ export function PullRequestThreadDialog({
         await onPrepared({
           branch: result.branch,
           worktreePath: result.worktreePath,
+          executionEnvironment,
         });
         onOpenChange(false);
       } finally {
@@ -146,6 +158,7 @@ export function PullRequestThreadDialog({
       onPrepared,
       parsedReference,
       preparePullRequestThreadMutation,
+      executionEnvironment,
       resolvedPullRequest,
     ],
   );
@@ -234,6 +247,59 @@ export function PullRequestThreadDialog({
           ) : null}
 
           {errorMessage ? <p className="text-destructive text-xs">{errorMessage}</p> : null}
+
+          <div className="space-y-2">
+            <span className="text-xs font-medium text-foreground">Execution environment</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                {
+                  value: "host" as const,
+                  label: "Host",
+                  description: "Run the provider directly on your machine.",
+                  disabled: false,
+                },
+                {
+                  value: "docker" as const,
+                  label: "Docker",
+                  description: dockerEnabled
+                    ? "Run the provider in a Docker container with this checkout mounted in."
+                    : "Enable Docker threads in Settings and use Codex to select this option.",
+                  disabled: !dockerEnabled,
+                },
+              ].map((option) => {
+                const selected = executionEnvironment === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={option.disabled}
+                    className={cn(
+                      "flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left transition-colors",
+                      selected
+                        ? "border-primary/60 bg-primary/8 text-foreground"
+                        : "border-border bg-background text-muted-foreground hover:bg-accent",
+                      option.disabled ? "cursor-not-allowed opacity-60 hover:bg-background" : "",
+                    )}
+                    onClick={() => {
+                      if (!option.disabled) {
+                        setExecutionEnvironment(option.value);
+                      }
+                    }}
+                  >
+                    <span className="flex flex-col">
+                      <span className="text-sm font-medium">{option.label}</span>
+                      <span className="text-xs">{option.description}</span>
+                    </span>
+                    {selected ? (
+                      <span className="rounded bg-primary/14 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+                        Selected
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </DialogPanel>
         <DialogFooter>
           <Button

@@ -11,6 +11,9 @@ import {
 } from "./baseSchemas";
 import {
   ChatAttachment,
+  DEFAULT_EXECUTION_ENVIRONMENT,
+  ExecutionEnvironment,
+  ExecutionMetadata,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderStartOptions,
@@ -37,6 +40,10 @@ export const ProviderSession = Schema.Struct({
   provider: ProviderKind,
   status: ProviderSessionStatus,
   runtimeMode: RuntimeMode,
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
+  executionMetadata: Schema.optional(ExecutionMetadata),
   cwd: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
   threadId: ThreadId,
@@ -58,6 +65,9 @@ export const ProviderSessionStartInput = Schema.Struct({
   sandboxMode: Schema.optional(ProviderSandboxMode),
   providerOptions: Schema.optional(ProviderStartOptions),
   runtimeMode: RuntimeMode,
+  executionEnvironment: Schema.optional(ExecutionEnvironment).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_EXECUTION_ENVIRONMENT),
+  ),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

@@ -1,6 +1,7 @@
 import {
   type ChatAttachment,
   CommandId,
+  DEFAULT_EXECUTION_ENVIRONMENT,
   EventId,
   type OrchestrationEvent,
   type ProviderModelOptions,
@@ -204,6 +205,7 @@ const make = Effect.gen(function* () {
     }
 
     const desiredRuntimeMode = thread.runtimeMode;
+    const desiredExecutionEnvironment = thread.executionEnvironment;
     const currentProvider =
       thread.session?.providerName && Schema.is(ProviderKind)(thread.session.providerName)
         ? thread.session.providerName
@@ -237,6 +239,7 @@ const make = Effect.gen(function* () {
           : {}),
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
+        executionEnvironment: desiredExecutionEnvironment,
       });
 
     const bindSessionToThread = (session: ProviderSession) =>
@@ -247,6 +250,7 @@ const make = Effect.gen(function* () {
           status: mapProviderSessionStatusToOrchestrationStatus(session.status),
           providerName: session.provider,
           runtimeMode: desiredRuntimeMode,
+          executionEnvironment: desiredExecutionEnvironment,
           // Provider turn ids are not orchestration turn ids.
           activeTurnId: null,
           lastError: session.lastError ?? null,
@@ -259,6 +263,8 @@ const make = Effect.gen(function* () {
       thread.session && thread.session.status !== "stopped" ? thread.id : null;
     if (existingSessionThreadId) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+      const executionEnvironmentChanged =
+        thread.executionEnvironment !== thread.session?.executionEnvironment;
       const providerChanged =
         options?.provider !== undefined && options.provider !== currentProvider;
       const activeSession = yield* resolveActiveSession(existingSessionThreadId);
@@ -269,12 +275,17 @@ const make = Effect.gen(function* () {
       const modelChanged = options?.model !== undefined && options.model !== activeSession?.model;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
 
-      if (!runtimeModeChanged && !providerChanged && !shouldRestartForModelChange) {
+      if (
+        !runtimeModeChanged &&
+        !executionEnvironmentChanged &&
+        !providerChanged &&
+        !shouldRestartForModelChange
+      ) {
         return existingSessionThreadId;
       }
 
       const resumeCursor =
-        providerChanged || shouldRestartForModelChange
+        providerChanged || shouldRestartForModelChange || executionEnvironmentChanged
           ? undefined
           : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
@@ -284,7 +295,11 @@ const make = Effect.gen(function* () {
         desiredProvider: options?.provider ?? currentProvider,
         currentRuntimeMode: thread.session?.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
+        currentExecutionEnvironment:
+          thread.session?.executionEnvironment ?? DEFAULT_EXECUTION_ENVIRONMENT,
+        desiredExecutionEnvironment: thread.executionEnvironment,
         runtimeModeChanged,
+        executionEnvironmentChanged,
         providerChanged,
         modelChanged,
         shouldRestartForModelChange,
@@ -300,6 +315,7 @@ const make = Effect.gen(function* () {
         restartedSessionThreadId: restartedSession.threadId,
         provider: restartedSession.provider,
         runtimeMode: restartedSession.runtimeMode,
+        executionEnvironment: restartedSession.executionEnvironment,
       });
       yield* bindSessionToThread(restartedSession);
       return restartedSession.threadId;
@@ -605,14 +621,16 @@ const make = Effect.gen(function* () {
 
     yield* setThreadSession({
       threadId: thread.id,
-      session: {
-        threadId: thread.id,
-        status: "stopped",
-        providerName: thread.session?.providerName ?? null,
-        runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-        activeTurnId: null,
-        lastError: thread.session?.lastError ?? null,
-        updatedAt: now,
+        session: {
+          threadId: thread.id,
+          status: "stopped",
+          providerName: thread.session?.providerName ?? null,
+          runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+          executionEnvironment:
+            thread.session?.executionEnvironment ?? DEFAULT_EXECUTION_ENVIRONMENT,
+          activeTurnId: null,
+          lastError: thread.session?.lastError ?? null,
+          updatedAt: now,
       },
       createdAt: now,
     });

@@ -5,6 +5,8 @@ import readline from "node:readline";
 
 import {
   ApprovalRequestId,
+  DEFAULT_EXECUTION_ENVIRONMENT,
+  DEFAULT_RUNTIME_MODE,
   EventId,
   ProviderItemId,
   ProviderRequestKind,
@@ -21,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Effect, ServiceMap } from "effect";
+import { DockerThreadManager } from "./docker/Services/DockerThreadManager.ts";
 
 import {
   formatCodexCliUpgradeMessage,
@@ -132,6 +135,7 @@ export interface CodexAppServerStartSessionInput {
   readonly resumeCursor?: unknown;
   readonly providerOptions?: ProviderSessionStartInput["providerOptions"];
   readonly runtimeMode: RuntimeMode;
+  readonly executionEnvironment?: ProviderSessionStartInput["executionEnvironment"];
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -514,11 +518,18 @@ export interface CodexAppServerManagerEvents {
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly services: ServiceMap.ServiceMap<never> | undefined;
 
-  private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   constructor(services?: ServiceMap.ServiceMap<never>) {
     super();
-    this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
+    this.services = services;
+  }
+
+  private runPromise<T>(effect: Effect.Effect<T, any, any>): Promise<T> {
+    if (this.services) {
+      return Effect.runPromiseWith(this.services as any)(effect as any) as Promise<T>;
+    }
+    return Effect.runPromise(effect as any) as Promise<T>;
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
@@ -528,11 +539,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     try {
       const resolvedCwd = input.cwd ?? process.cwd();
+      const requestedExecutionEnvironment =
+        input.executionEnvironment ?? DEFAULT_EXECUTION_ENVIRONMENT;
 
       const session: ProviderSession = {
         provider: "codex",
         status: "connecting",
-        runtimeMode: input.runtimeMode,
+        runtimeMode: input.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        executionEnvironment: requestedExecutionEnvironment,
         model: normalizeCodexModelSlug(input.model),
         cwd: resolvedCwd,
         threadId,
@@ -541,22 +555,53 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       };
 
       const codexOptions = readCodexProviderOptions(input);
+      const dockerOptions = readDockerProviderOptions(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
-      this.assertSupportedCodexCliVersion({
-        binaryPath: codexBinaryPath,
-        cwd: resolvedCwd,
-        ...(codexHomePath ? { homePath: codexHomePath } : {}),
-      });
-      const child = spawn(codexBinaryPath, ["app-server"], {
-        cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+      const launchPlan =
+        requestedExecutionEnvironment === "docker"
+          ? await this.runPromise(
+              Effect.gen(function* () {
+                const dockerThreadManager = yield* DockerThreadManager;
+                if (!dockerOptions.image) {
+                  return yield* Effect.fail(
+                    new Error(
+                      "Docker threads require providerOptions.docker.image to be configured.",
+                    ),
+                  );
+                }
+                return yield* dockerThreadManager.ensureCodexLaunchPlan({
+                  threadId,
+                  hostWorkspacePath: resolvedCwd,
+                  image: dockerOptions.image,
+                  workspacePath: dockerOptions.workspacePath ?? "/workspace",
+                  network: dockerOptions.network ?? "none",
+                  ...(codexBinaryPath ? { codexBinaryPath } : {}),
+                  ...(codexHomePath ? { codexHomePath } : {}),
+                });
+              }),
+            )
+          : undefined;
+      if (requestedExecutionEnvironment !== "docker") {
+        this.assertSupportedCodexCliVersion({
+          binaryPath: codexBinaryPath,
+          cwd: resolvedCwd,
+          ...(codexHomePath ? { homePath: codexHomePath } : {}),
+        });
+      }
+      const child = spawn(
+        launchPlan?.command ?? codexBinaryPath,
+        launchPlan?.args ?? ["app-server"],
+        {
+          cwd: launchPlan?.cwd ?? resolvedCwd,
+          env: launchPlan?.env ?? {
+            ...process.env,
+            ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          },
+          stdio: ["pipe", "pipe", "pipe"],
+          shell: process.platform === "win32" && launchPlan === undefined,
         },
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
-      });
+      );
       const output = readline.createInterface({ input: child.stdout });
 
       context = {
@@ -577,6 +622,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       this.sessions.set(threadId, context);
       this.attachProcessListeners(context);
+      if (launchPlan) {
+        this.updateSession(context, {
+          executionMetadata: { docker: launchPlan.metadata },
+        });
+      }
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
 
@@ -992,6 +1042,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     if (!context.child.killed) {
       killChildTree(context.child);
     }
+    void this.cleanupDockerThread(context);
 
     this.updateSession(context, {
       status: "closed",
@@ -1069,6 +1120,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: code === 0 ? context.session.lastError : message,
       });
       this.emitLifecycleEvent(context, "session/exited", message);
+      void this.cleanupDockerThread(context);
       this.sessions.delete(context.session.threadId);
     });
   }
@@ -1349,6 +1401,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     };
   }
 
+  private cleanupDockerThread(context: CodexSessionContext): void {
+    const containerName = context.session.executionMetadata?.docker?.containerName;
+    if (!containerName) {
+      return;
+    }
+    void this.runPromise(
+      Effect.gen(function* () {
+        const dockerThreadManager = yield* DockerThreadManager;
+        yield* dockerThreadManager.stopContainer(containerName);
+      }).pipe(Effect.ignore),
+    ).catch(() => undefined);
+  }
+
   private requestKindForMethod(method: string): ProviderRequestKind | undefined {
     if (method === "item/commandExecution/requestApproval") {
       return "command";
@@ -1518,6 +1583,24 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   return {
     ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
     ...(options.homePath ? { homePath: options.homePath } : {}),
+  };
+}
+
+function readDockerProviderOptions(input: CodexAppServerStartSessionInput): {
+  readonly enabled?: boolean;
+  readonly image?: string;
+  readonly workspacePath?: string;
+  readonly network?: "none" | "bridge";
+} {
+  const options = input.providerOptions?.docker;
+  if (!options) {
+    return {};
+  }
+  return {
+    ...(options.enabled !== undefined ? { enabled: options.enabled } : {}),
+    ...(options.image ? { image: options.image } : {}),
+    ...(options.workspacePath ? { workspacePath: options.workspacePath } : {}),
+    ...(options.network ? { network: options.network } : {}),
   };
 }
 

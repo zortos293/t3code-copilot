@@ -73,9 +73,24 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
         provider,
         status: "ready",
         runtimeMode: input.runtimeMode,
+        executionEnvironment: input.executionEnvironment,
         threadId: input.threadId,
         resumeCursor: input.resumeCursor ?? { opaque: `cursor-${String(input.threadId)}` },
         cwd: input.cwd ?? process.cwd(),
+        ...(input.executionEnvironment === "docker"
+          ? {
+              executionMetadata: {
+                docker: {
+                  containerName: `t3code-thread-${String(input.threadId)}`,
+                  image:
+                    input.providerOptions?.docker?.image ?? "ghcr.io/example/t3code-codex:latest",
+                  workspacePath: input.providerOptions?.docker?.workspacePath ?? "/workspace",
+                  hostWorkspacePath: input.cwd ?? process.cwd(),
+                  network: input.providerOptions?.docker?.network ?? "none",
+                },
+              },
+            }
+          : {}),
         createdAt: now,
         updatedAt: now,
       };
@@ -633,6 +648,163 @@ routing.layer("ProviderServiceLive routing", (it) => {
           assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+        }
+      }
+    }),
+  );
+
+  it.effect("persists docker execution config in provider_session_runtime", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const session = yield* provider.startSession(asThreadId("thread-docker"), {
+        provider: "codex",
+        threadId: asThreadId("thread-docker"),
+        cwd: "/tmp/project-docker",
+        runtimeMode: "full-access",
+        executionEnvironment: "docker",
+        providerOptions: {
+          docker: {
+            enabled: true,
+            image: "ghcr.io/t3tools/codex:latest",
+            workspacePath: "/workspace",
+            network: "bridge",
+          },
+        },
+      });
+
+      const persisted = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.equal(persisted.value.executionEnvironment, "docker");
+        const payload = persisted.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            executionMetadata?: {
+              docker?: {
+                containerName: string;
+                image: string;
+                workspacePath: string;
+                hostWorkspacePath: string;
+                network: string;
+              } | null;
+            } | null;
+            providerOptions?: {
+              docker?: {
+                enabled?: boolean;
+                image?: string;
+                workspacePath?: string;
+                network?: string;
+              };
+            };
+          };
+          assert.deepEqual(runtimePayload.providerOptions, {
+            docker: {
+              enabled: true,
+              image: "ghcr.io/t3tools/codex:latest",
+              workspacePath: "/workspace",
+              network: "bridge",
+            },
+          });
+          assert.deepEqual(runtimePayload.executionMetadata?.docker, {
+            containerName: `t3code-thread-${String(session.threadId)}`,
+            image: "ghcr.io/t3tools/codex:latest",
+            workspacePath: "/workspace",
+            hostWorkspacePath: "/tmp/project-docker",
+            network: "bridge",
+          });
+        }
+      }
+    }),
+  );
+
+  it.effect("reuses persisted docker execution config when recovering a session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+
+      const initial = yield* provider.startSession(asThreadId("thread-docker-recover"), {
+        provider: "codex",
+        threadId: asThreadId("thread-docker-recover"),
+        cwd: "/tmp/project-docker-recover",
+        runtimeMode: "full-access",
+        executionEnvironment: "docker",
+        providerOptions: {
+          docker: {
+            enabled: true,
+            image: "ghcr.io/t3tools/codex:recover",
+            workspacePath: "/workspace",
+            network: "none",
+          },
+        },
+      });
+
+      yield* routing.codex.stopAll();
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+
+      yield* provider.sendTurn({
+        threadId: initial.threadId,
+        input: "resume docker",
+        attachments: [],
+      });
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          executionEnvironment?: string;
+          providerOptions?: {
+            docker?: {
+              enabled?: boolean;
+              image?: string;
+              workspacePath?: string;
+              network?: string;
+            };
+          };
+        };
+        assert.equal(startPayload.executionEnvironment, "docker");
+        assert.deepEqual(startPayload.providerOptions, {
+          docker: {
+            enabled: true,
+            image: "ghcr.io/t3tools/codex:recover",
+            workspacePath: "/workspace",
+            network: "none",
+          },
+        });
+      }
+
+      const persisted = yield* runtimeRepository.getByThreadId({
+        threadId: initial.threadId,
+      });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        const payload = persisted.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            executionMetadata?: {
+              docker?: {
+                containerName: string;
+                image: string;
+                workspacePath: string;
+                hostWorkspacePath: string;
+                network: string;
+              } | null;
+            } | null;
+          };
+          assert.deepEqual(runtimePayload.executionMetadata?.docker, {
+            containerName: `t3code-thread-${String(initial.threadId)}`,
+            image: "ghcr.io/t3tools/codex:recover",
+            workspacePath: "/workspace",
+            hostWorkspacePath: "/tmp/project-docker-recover",
+            network: "none",
+          });
         }
       }
     }),

@@ -689,6 +689,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           model: bootstrapProjectDefaultModel,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
+          executionEnvironment: "host",
           branch: null,
           worktreePath: null,
           createdAt,

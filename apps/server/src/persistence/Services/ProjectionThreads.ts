@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  ExecutionEnvironment,
   IsoDateTime,
   ProjectId,
   ProviderInteractionMode,
@@ -25,6 +26,7 @@ export const ProjectionThread = Schema.Struct({
   title: Schema.String,
   model: Schema.String,
   runtimeMode: RuntimeMode,
+  executionEnvironment: ExecutionEnvironment,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),

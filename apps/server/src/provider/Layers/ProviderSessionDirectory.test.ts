@@ -144,6 +144,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         providerName: "cursor",
         adapterKey: "cursor",
         runtimeMode: "full-access",
+        executionEnvironment: "host",
         status: "running",
         lastSeenAt: new Date().toISOString(),
         resumeCursor: null,

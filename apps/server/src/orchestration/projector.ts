@@ -16,6 +16,7 @@ import {
   ThreadActivityAppendedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadExecutionEnvironmentSetPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -254,6 +255,7 @@ export function projectEvent(
             title: payload.title,
             model: payload.model,
             runtimeMode: payload.runtimeMode,
+            executionEnvironment: payload.executionEnvironment,
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
@@ -309,6 +311,22 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             runtimeMode: payload.runtimeMode,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.execution-environment-set":
+      return decodeForEvent(
+        ThreadExecutionEnvironmentSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            executionEnvironment: payload.executionEnvironment,
             updatedAt: payload.updatedAt,
           }),
         })),

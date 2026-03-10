@@ -1305,6 +1305,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         ...(input.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
         runtimeMode: input.runtimeMode,
+        executionEnvironment: input.executionEnvironment,
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.modelOptions?.codex?.fastMode ? { serviceTier: "fast" } : {}),
       };

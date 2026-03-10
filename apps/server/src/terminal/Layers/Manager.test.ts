@@ -17,6 +17,10 @@ import {
   type PtyProcess,
   type PtySpawnInput,
 } from "../Services/PTY";
+import type {
+  TerminalExecutionTarget,
+  TerminalExecutionTargetInput,
+} from "../Services/Manager";
 import { TerminalManagerRuntime } from "./Manager";
 import { Effect, Encoding } from "effect";
 
@@ -182,6 +186,9 @@ describe("TerminalManager", () => {
     historyLineLimit = 5,
     options: {
       shellResolver?: () => string;
+      resolveExecutionTarget?: (
+        input: TerminalExecutionTargetInput,
+      ) => Promise<TerminalExecutionTarget>;
       subprocessChecker?: (terminalPid: number) => Promise<boolean>;
       subprocessPollIntervalMs?: number;
       processKillGraceMs?: number;
@@ -197,6 +204,9 @@ describe("TerminalManager", () => {
       ptyAdapter,
       historyLineLimit,
       shellResolver: options.shellResolver ?? (() => "/bin/bash"),
+      ...(options.resolveExecutionTarget
+        ? { resolveExecutionTarget: options.resolveExecutionTarget }
+        : {}),
       ...(options.subprocessChecker ? { subprocessChecker: options.subprocessChecker } : {}),
       ...(options.subprocessPollIntervalMs
         ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
@@ -661,6 +671,126 @@ describe("TerminalManager", () => {
     expect(spawnInput.env.T3CODE_PROJECT_ROOT).toBe("/repo");
     expect(spawnInput.env.T3CODE_WORKTREE_PATH).toBe("/repo/worktree-a");
     expect(spawnInput.env.CUSTOM_FLAG).toBe("1");
+
+    manager.dispose();
+  });
+
+  it("uses resolved docker execution targets for thread terminals", async () => {
+    const hostWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-workspace-"));
+    tempDirs.push(hostWorkspace);
+    const hostCwd = path.join(hostWorkspace, "packages", "shared");
+    fs.mkdirSync(hostCwd, { recursive: true });
+
+    const { manager, ptyAdapter } = makeManager(5, {
+      resolveExecutionTarget: async ({ cwd }) => ({
+        key: "docker:container-1:/workspace",
+        cwd: cwd.replace(hostWorkspace, "/workspace"),
+        env: process.env,
+        shellCandidates: [
+          {
+            shell: "docker",
+            args: [
+              "exec",
+              "-it",
+              "-w",
+              cwd.replace(hostWorkspace, "/workspace"),
+              "-e",
+              "CUSTOM_FLAG=1",
+              "container-1",
+              "/bin/sh",
+            ],
+          },
+        ],
+        supportsSubprocessPolling: false,
+      }),
+    });
+    await manager.open(
+      openInput({
+        cwd: hostCwd,
+        env: {
+          CUSTOM_FLAG: "1",
+        },
+      }),
+    );
+    const spawnInput = ptyAdapter.spawnInputs[0];
+    expect(spawnInput).toBeDefined();
+    if (!spawnInput) return;
+
+    expect(spawnInput.shell).toBe("docker");
+    expect(spawnInput.cwd).toBe("/workspace/packages/shared");
+    expect(spawnInput.args).toEqual([
+      "exec",
+      "-it",
+      "-w",
+      "/workspace/packages/shared",
+      "-e",
+      "CUSTOM_FLAG=1",
+      "container-1",
+      "/bin/sh",
+    ]);
+
+    manager.dispose();
+  });
+
+  it("restarts a terminal when the execution target changes", async () => {
+    const hostWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-workspace-"));
+    tempDirs.push(hostWorkspace);
+    let containerName = "container-1";
+
+    const { manager, ptyAdapter } = makeManager(5, {
+      resolveExecutionTarget: async ({ cwd }) => ({
+        key: `docker:${containerName}:/workspace`,
+        cwd: cwd.replace(hostWorkspace, "/workspace"),
+        env: process.env,
+        shellCandidates: [
+          {
+            shell: "docker",
+            args: ["exec", "-it", "-w", cwd.replace(hostWorkspace, "/workspace"), containerName, "sh"],
+          },
+        ],
+        supportsSubprocessPolling: false,
+      }),
+    });
+
+    await manager.open(openInput({ cwd: hostWorkspace }));
+    const firstProcess = ptyAdapter.processes[0];
+    expect(firstProcess).toBeDefined();
+    if (!firstProcess) return;
+
+    containerName = "container-2";
+    await manager.open(openInput({ cwd: hostWorkspace }));
+
+    expect(firstProcess.killed).toBe(true);
+    expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    expect(ptyAdapter.spawnInputs[1]?.args).toContain("container-2");
+
+    manager.dispose();
+  });
+
+  it("skips subprocess polling for execution targets that disable it", async () => {
+    const hostWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-terminal-workspace-"));
+    tempDirs.push(hostWorkspace);
+    let subprocessChecks = 0;
+
+    const { manager } = makeManager(5, {
+      resolveExecutionTarget: async ({ cwd }) => ({
+        key: "docker:container-1:/workspace",
+        cwd: cwd.replace(hostWorkspace, "/workspace"),
+        env: process.env,
+        shellCandidates: [{ shell: "docker", args: ["exec", "-it", "container-1", "sh"] }],
+        supportsSubprocessPolling: false,
+      }),
+      subprocessChecker: async () => {
+        subprocessChecks += 1;
+        return true;
+      },
+      subprocessPollIntervalMs: 20,
+    });
+
+    await manager.open(openInput({ cwd: hostWorkspace }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(subprocessChecks).toBe(0);
 
     manager.dispose();
   });

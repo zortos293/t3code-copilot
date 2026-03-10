@@ -1,4 +1,5 @@
 import {
+  type ExecutionEnvironment,
   ProjectId,
   REASONING_EFFORT_OPTIONS_BY_PROVIDER,
   ThreadId,
@@ -8,7 +9,12 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
+import {
+  DEFAULT_EXECUTION_ENVIRONMENT,
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type ChatImageAttachment,
+} from "./types";
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
@@ -76,6 +82,7 @@ interface PersistedComposerThreadDraftState {
   provider?: ProviderKind | null;
   model?: string | null;
   runtimeMode?: RuntimeMode | null;
+  executionEnvironment?: ExecutionEnvironment | null;
   interactionMode?: ProviderInteractionMode | null;
   effort?: CodexReasoningEffort | null;
   codexFastMode?: boolean | null;
@@ -86,6 +93,7 @@ interface PersistedDraftThreadState {
   projectId: ProjectId;
   createdAt: string;
   runtimeMode: RuntimeMode;
+  executionEnvironment: ExecutionEnvironment;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
   worktreePath: string | null;
@@ -106,6 +114,7 @@ interface ComposerThreadDraftState {
   provider: ProviderKind | null;
   model: string | null;
   runtimeMode: RuntimeMode | null;
+  executionEnvironment: ExecutionEnvironment | null;
   interactionMode: ProviderInteractionMode | null;
   effort: CodexReasoningEffort | null;
   codexFastMode: boolean;
@@ -115,6 +124,7 @@ export interface DraftThreadState {
   projectId: ProjectId;
   createdAt: string;
   runtimeMode: RuntimeMode;
+  executionEnvironment: ExecutionEnvironment;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
   worktreePath: string | null;
@@ -140,6 +150,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
+      executionEnvironment?: ExecutionEnvironment;
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
@@ -152,6 +163,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
+      executionEnvironment?: ExecutionEnvironment;
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
@@ -166,6 +178,10 @@ interface ComposerDraftStoreState {
     provider?: ProviderKind | null | undefined,
   ) => void;
   setRuntimeMode: (threadId: ThreadId, runtimeMode: RuntimeMode | null | undefined) => void;
+  setExecutionEnvironment: (
+    threadId: ThreadId,
+    executionEnvironment: ExecutionEnvironment | null | undefined,
+  ) => void;
   setInteractionMode: (
     threadId: ThreadId,
     interactionMode: ProviderInteractionMode | null | undefined,
@@ -204,6 +220,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze({
   provider: null,
   model: null,
   runtimeMode: null,
+  executionEnvironment: null,
   interactionMode: null,
   effort: null,
   codexFastMode: false,
@@ -222,6 +239,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     provider: null,
     model: null,
     runtimeMode: null,
+    executionEnvironment: null,
     interactionMode: null,
     effort: null,
     codexFastMode: false,
@@ -242,6 +260,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.provider === null &&
     draft.model === null &&
     draft.runtimeMode === null &&
+    draft.executionEnvironment === null &&
     draft.interactionMode === null &&
     draft.effort === null &&
     draft.codexFastMode === false
@@ -320,6 +339,10 @@ function normalizeDraftThreadEnvMode(
   return fallbackWorktreePath ? "worktree" : "local";
 }
 
+function normalizeExecutionEnvironment(value: unknown): ExecutionEnvironment | null {
+  return value === "host" || value === "docker" ? value : null;
+}
+
 function normalizePersistedComposerDraftState(value: unknown): PersistedComposerDraftStoreState {
   if (!value || typeof value !== "object") {
     return EMPTY_PERSISTED_DRAFT_STORE_STATE;
@@ -359,6 +382,9 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           candidateDraftThread.runtimeMode === "full-access"
             ? candidateDraftThread.runtimeMode
             : DEFAULT_RUNTIME_MODE,
+        executionEnvironment:
+          normalizeExecutionEnvironment(candidateDraftThread.executionEnvironment) ??
+          DEFAULT_EXECUTION_ENVIRONMENT,
         interactionMode:
           candidateDraftThread.interactionMode === "plan" ||
           candidateDraftThread.interactionMode === "default"
@@ -391,6 +417,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
             projectId: projectId as ProjectId,
             createdAt: new Date().toISOString(),
             runtimeMode: DEFAULT_RUNTIME_MODE,
+            executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
             interactionMode: DEFAULT_INTERACTION_MODE,
             branch: null,
             worktreePath: null,
@@ -434,6 +461,9 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       draftCandidate.runtimeMode === "full-access"
         ? draftCandidate.runtimeMode
         : null;
+    const executionEnvironment = normalizeExecutionEnvironment(
+      draftCandidate.executionEnvironment,
+    );
     const interactionMode =
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
@@ -453,6 +483,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       !provider &&
       !model &&
       !runtimeMode &&
+      !executionEnvironment &&
       !interactionMode &&
       !effort &&
       !codexFastMode
@@ -465,6 +496,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       ...(provider ? { provider } : {}),
       ...(model ? { model } : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
+      ...(executionEnvironment ? { executionEnvironment } : {}),
       ...(interactionMode ? { interactionMode } : {}),
       ...(effort ? { effort } : {}),
       ...(codexFastMode ? { codexFastMode } : {}),
@@ -571,6 +603,7 @@ function toHydratedThreadDraft(
     provider: persistedDraft.provider ?? null,
     model: persistedDraft.model ?? null,
     runtimeMode: persistedDraft.runtimeMode ?? null,
+    executionEnvironment: persistedDraft.executionEnvironment ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
     effort: persistedDraft.effort ?? null,
     codexFastMode: persistedDraft.codexFastMode === true,
@@ -622,6 +655,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
             runtimeMode:
               options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+            executionEnvironment:
+              options?.executionEnvironment ??
+              existingThread?.executionEnvironment ??
+              DEFAULT_EXECUTION_ENVIRONMENT,
             interactionMode:
               options?.interactionMode ??
               existingThread?.interactionMode ??
@@ -641,6 +678,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread.projectId === nextDraftThread.projectId &&
             existingThread.createdAt === nextDraftThread.createdAt &&
             existingThread.runtimeMode === nextDraftThread.runtimeMode &&
+            existingThread.executionEnvironment === nextDraftThread.executionEnvironment &&
             existingThread.interactionMode === nextDraftThread.interactionMode &&
             existingThread.branch === nextDraftThread.branch &&
             existingThread.worktreePath === nextDraftThread.worktreePath &&
@@ -699,6 +737,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
                 ? existing.createdAt
                 : options.createdAt || existing.createdAt,
             runtimeMode: options.runtimeMode ?? existing.runtimeMode,
+            executionEnvironment:
+              options.executionEnvironment ?? existing.executionEnvironment,
             interactionMode: options.interactionMode ?? existing.interactionMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
             worktreePath: nextWorktreePath,
@@ -709,6 +749,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftThread.projectId === existing.projectId &&
             nextDraftThread.createdAt === existing.createdAt &&
             nextDraftThread.runtimeMode === existing.runtimeMode &&
+            nextDraftThread.executionEnvironment === existing.executionEnvironment &&
             nextDraftThread.interactionMode === existing.interactionMode &&
             nextDraftThread.branch === existing.branch &&
             nextDraftThread.worktreePath === existing.worktreePath &&
@@ -910,6 +951,36 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraft: ComposerThreadDraftState = {
             ...base,
             runtimeMode: nextRuntimeMode,
+          };
+          const nextDraftsByThreadId = { ...state.draftsByThreadId };
+          if (shouldRemoveDraft(nextDraft)) {
+            delete nextDraftsByThreadId[threadId];
+          } else {
+            nextDraftsByThreadId[threadId] = nextDraft;
+          }
+          return { draftsByThreadId: nextDraftsByThreadId };
+        });
+      },
+      setExecutionEnvironment: (threadId, executionEnvironment) => {
+        if (threadId.length === 0) {
+          return;
+        }
+        const nextExecutionEnvironment =
+          executionEnvironment === "host" || executionEnvironment === "docker"
+            ? executionEnvironment
+            : null;
+        set((state) => {
+          const existing = state.draftsByThreadId[threadId];
+          if (!existing && nextExecutionEnvironment === null) {
+            return state;
+          }
+          const base = existing ?? createEmptyThreadDraft();
+          if (base.executionEnvironment === nextExecutionEnvironment) {
+            return state;
+          }
+          const nextDraft: ComposerThreadDraftState = {
+            ...base,
+            executionEnvironment: nextExecutionEnvironment,
           };
           const nextDraftsByThreadId = { ...state.draftsByThreadId };
           if (shouldRemoveDraft(nextDraft)) {
@@ -1237,6 +1308,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             draft.provider === null &&
             draft.model === null &&
             draft.runtimeMode === null &&
+            draft.executionEnvironment === null &&
             draft.interactionMode === null &&
             draft.effort === null &&
             draft.codexFastMode === false
@@ -1255,6 +1327,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           }
           if (draft.runtimeMode) {
             persistedDraft.runtimeMode = draft.runtimeMode;
+          }
+          if (draft.executionEnvironment) {
+            persistedDraft.executionEnvironment = draft.executionEnvironment;
           }
           if (draft.interactionMode) {
             persistedDraft.interactionMode = draft.interactionMode;

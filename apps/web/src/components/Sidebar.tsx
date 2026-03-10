@@ -44,6 +44,7 @@ import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isMacPlatform, newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
+import { DEFAULT_EXECUTION_ENVIRONMENT } from "../types";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
@@ -492,6 +493,7 @@ export default function Sidebar() {
           worktreePath: options?.worktreePath ?? null,
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
+          executionEnvironment: DEFAULT_EXECUTION_ENVIRONMENT,
         });
         if (hasProviderOption) {
           setDraftProvider(threadId, nextProvider);
