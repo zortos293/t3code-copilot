@@ -1,13 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { type ProviderKind } from "@t3tools/contracts";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  WEBGPU_DTYPE_OPTIONS,
+  type ProviderKind,
+  type WebGpuModelDtype,
+} from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import {
+  clearLocalWebGpuState,
+  getLocalWebGpuStatusSnapshot,
+  subscribeLocalWebGpuStatus,
+} from "../localWebGpuOrchestration";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
 import { Button } from "../components/ui/button";
@@ -47,6 +56,13 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  {
+    provider: "webgpu",
+    title: "Local WebGPU",
+    description: "Save additional Hugging Face / ONNX model ids for the local browser adapter.",
+    placeholder: "onnx-community/your-model-id",
+    example: "onnx-community/Qwen2.5-0.5B-Instruct",
+  },
 ] as const;
 
 function getCustomModelsForProvider(
@@ -55,6 +71,9 @@ function getCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
+      return settings.customCodexModels;
+    case "webgpu":
+      return settings.customWebGpuModels;
     default:
       return settings.customCodexModels;
   }
@@ -66,6 +85,9 @@ function getDefaultCustomModelsForProvider(
 ) {
   switch (provider) {
     case "codex":
+      return defaults.customCodexModels;
+    case "webgpu":
+      return defaults.customWebGpuModels;
     default:
       return defaults.customCodexModels;
   }
@@ -74,22 +96,46 @@ function getDefaultCustomModelsForProvider(
 function patchCustomModels(provider: ProviderKind, models: string[]) {
   switch (provider) {
     case "codex":
+      return { customCodexModels: models };
+    case "webgpu":
+      return { customWebGpuModels: models };
     default:
       return { customCodexModels: models };
   }
+}
+
+function formatLocalWebGpuProgress(progress: {
+  loaded: number;
+  total: number | null;
+  file: string | null;
+} | null): string | null {
+  if (!progress) return null;
+  if (progress.total && progress.total > 0) {
+    const percent = Math.max(0, Math.min(100, Math.round((progress.loaded / progress.total) * 100)));
+    return `${percent}%${progress.file ? ` · ${progress.file}` : ""}`;
+  }
+  return progress.file ? `Downloading ${progress.file}` : "Downloading model files";
 }
 
 function SettingsRouteView() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const { settings, defaults, updateSettings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const localWebGpuStatus = useSyncExternalStore(
+    subscribeLocalWebGpuStatus,
+    getLocalWebGpuStatusSnapshot,
+    getLocalWebGpuStatusSnapshot,
+  );
   const [isOpeningKeybindings, setIsOpeningKeybindings] = useState(false);
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
+  const [isClearingLocalWebGpuState, setIsClearingLocalWebGpuState] = useState(false);
+  const [localWebGpuActionMessage, setLocalWebGpuActionMessage] = useState<string | null>(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
     copilot: "",
+    webgpu: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -98,6 +144,17 @@ function SettingsRouteView() {
   const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
+  const webGpuBuiltInOptions = getModelOptions("webgpu");
+  const webGpuModelOptions = useMemo(
+    () => [
+      ...webGpuBuiltInOptions.map((option) => ({ slug: option.slug, name: option.name })),
+      ...settings.customWebGpuModels
+        .filter((slug) => !webGpuBuiltInOptions.some((option) => option.slug === slug))
+        .map((slug) => ({ slug, name: slug })),
+    ],
+    [settings.customWebGpuModels, webGpuBuiltInOptions],
+  );
+  const localWebGpuProgressLabel = formatLocalWebGpuProgress(localWebGpuStatus.progress);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -179,6 +236,21 @@ function SettingsRouteView() {
     },
     [settings, updateSettings],
   );
+
+  const resetLocalWebGpuState = useCallback(async () => {
+    setIsClearingLocalWebGpuState(true);
+    setLocalWebGpuActionMessage(null);
+    try {
+      await clearLocalWebGpuState();
+      setLocalWebGpuActionMessage("Cleared local WebGPU threads and unloaded the active model.");
+    } catch (error) {
+      setLocalWebGpuActionMessage(
+        error instanceof Error ? error.message : "Unable to clear local WebGPU state.",
+      );
+    } finally {
+      setIsClearingLocalWebGpuState(false);
+    }
+  }, []);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -431,6 +503,101 @@ function SettingsRouteView() {
                     </div>
                   );
                 })}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-border bg-card p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-medium text-foreground">Local WebGPU</h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Run curated Hugging Face ONNX models in the browser. The first run downloads
+                  model files and may take a while.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-background/50 p-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">Enable local WebGPU provider</p>
+                    <p className="text-xs text-muted-foreground">
+                      Disable this to hide the browser-side local model adapter from the picker.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.webGpuEnabled}
+                    onCheckedChange={(checked) => updateSettings({ webGpuEnabled: Boolean(checked) })}
+                  />
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Default local model</span>
+                    <select
+                      value={settings.webGpuDefaultModel}
+                      onChange={(event) => updateSettings({ webGpuDefaultModel: event.target.value })}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    >
+                      {webGpuModelOptions.map((option) => (
+                        <option key={option.slug} value={option.slug}>
+                          {option.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block space-y-1">
+                    <span className="text-xs font-medium text-foreground">Preferred dtype</span>
+                    <select
+                      value={settings.webGpuPreferredDtype}
+                      onChange={(event) =>
+                        updateSettings({
+                          webGpuPreferredDtype: event.target.value as WebGpuModelDtype,
+                        })
+                      }
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    >
+                      {WEBGPU_DTYPE_OPTIONS.map((dtype) => (
+                        <option key={dtype} value={dtype}>
+                          {dtype}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="rounded-xl border border-border bg-background/50 p-4 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      Status:{" "}
+                      <span className="font-medium text-foreground">
+                        {localWebGpuStatus.supported ? localWebGpuStatus.phase : "unsupported"}
+                      </span>
+                    </span>
+                    {localWebGpuProgressLabel ? <span>{localWebGpuProgressLabel}</span> : null}
+                  </div>
+                  <p className="mt-2">
+                    {localWebGpuStatus.supportMessage ??
+                      localWebGpuStatus.lastError ??
+                      "Use a recent Chromium-based browser with WebGPU enabled for the best results."}
+                  </p>
+                  {localWebGpuActionMessage ? (
+                    <p className="mt-2 text-foreground">{localWebGpuActionMessage}</p>
+                  ) : null}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isClearingLocalWebGpuState}
+                    onClick={() => void resetLocalWebGpuState()}
+                  >
+                    {isClearingLocalWebGpuState ? "Clearing..." : "Clear local WebGPU threads"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    This resets locally persisted threads and unloads the current browser model.
+                  </p>
+                </div>
               </div>
             </section>
 

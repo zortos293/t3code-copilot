@@ -25,6 +25,7 @@ export const PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "codex", label: "Codex", available: true },
   { value: "copilot", label: "GitHub Copilot", available: true },
+  { value: "webgpu", label: "Local WebGPU", available: true },
   { value: "claudeCode", label: "Claude Code", available: false },
   { value: "cursor", label: "Cursor", available: false },
 ];

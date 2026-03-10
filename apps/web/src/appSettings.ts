@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind } from "@t3tools/contracts";
+import { WEBGPU_DTYPE_OPTIONS, type ProviderKind, type WebGpuModelDtype } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
@@ -9,6 +9,7 @@ export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>> = {
   codex: new Set(getModelOptions("codex").map((option) => option.slug)),
   copilot: new Set(getModelOptions("copilot").map((option) => option.slug)),
+  webgpu: new Set(getModelOptions("webgpu").map((option) => option.slug)),
 };
 
 const AppSettingsSchema = Schema.Struct({
@@ -32,6 +33,16 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withConstructorDefault(() => Option.some([])),
   ),
   customCopilotModels: Schema.Array(Schema.String).pipe(
+    Schema.withConstructorDefault(() => Option.some([])),
+  ),
+  webGpuEnabled: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  webGpuDefaultModel: Schema.String.pipe(
+    Schema.withConstructorDefault(() => Option.some(getDefaultModel("webgpu"))),
+  ),
+  webGpuPreferredDtype: Schema.Literals(WEBGPU_DTYPE_OPTIONS).pipe(
+    Schema.withConstructorDefault(() => Option.some("q4" satisfies WebGpuModelDtype)),
+  ),
+  customWebGpuModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -86,10 +97,17 @@ export function normalizeCustomModelSlugs(
 }
 
 function normalizeAppSettings(settings: AppSettings): AppSettings {
+  const customWebGpuModels = normalizeCustomModelSlugs(settings.customWebGpuModels, "webgpu");
   return {
     ...settings,
     customCodexModels: normalizeCustomModelSlugs(settings.customCodexModels, "codex"),
     customCopilotModels: normalizeCustomModelSlugs(settings.customCopilotModels, "copilot"),
+    customWebGpuModels,
+    webGpuDefaultModel: resolveAppModelSelection(
+      "webgpu",
+      customWebGpuModels,
+      settings.webGpuDefaultModel,
+    ),
   };
 }
 

@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { NonNegativeInt } from "./baseSchemas";
 import { ProviderKind } from "./orchestration";
 
 export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
@@ -13,10 +14,20 @@ export const CopilotModelOptions = Schema.Struct({
   reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
 });
 export type CopilotModelOptions = typeof CopilotModelOptions.Type;
+export const WEBGPU_DTYPE_OPTIONS = ["q4", "q8", "fp16", "fp32"] as const;
+export type WebGpuModelDtype = (typeof WEBGPU_DTYPE_OPTIONS)[number];
+export const WebGpuModelOptions = Schema.Struct({
+  temperature: Schema.optional(Schema.Number),
+  topP: Schema.optional(Schema.Number),
+  maxTokens: Schema.optional(NonNegativeInt),
+  dtype: Schema.optional(Schema.Literals(WEBGPU_DTYPE_OPTIONS)),
+});
+export type WebGpuModelOptions = typeof WebGpuModelOptions.Type;
 
 export const ProviderModelOptions = Schema.Struct({
   codex: Schema.optional(CodexModelOptions),
   copilot: Schema.optional(CopilotModelOptions),
+  webgpu: Schema.optional(WebGpuModelOptions),
 });
 export type ProviderModelOptions = typeof ProviderModelOptions.Type;
 
@@ -53,6 +64,10 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5-mini", name: "GPT-5 mini" },
     { slug: "gpt-4.1", name: "GPT-4.1" },
   ],
+  webgpu: [
+    { slug: "onnx-community/Qwen2.5-0.5B-Instruct", name: "Qwen 2.5 0.5B Instruct" },
+    { slug: "onnx-community/SmolLM2-360M-Instruct", name: "SmolLM2 360M Instruct" },
+  ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
 
@@ -62,6 +77,7 @@ export type ModelSlug = BuiltInModelSlug | (string & {});
 export const DEFAULT_MODEL_BY_PROVIDER = {
   codex: "gpt-5.4",
   copilot: "claude-sonnet-4.6",
+  webgpu: "onnx-community/Qwen2.5-0.5B-Instruct",
 } as const satisfies Record<ProviderKind, ModelSlug>;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
@@ -88,14 +104,22 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
     opus: "claude-opus-4.6",
     gemini: "gemini-3-pro-preview",
   },
+  webgpu: {
+    qwen: "onnx-community/Qwen2.5-0.5B-Instruct",
+    "qwen-0.5b": "onnx-community/Qwen2.5-0.5B-Instruct",
+    smollm: "onnx-community/SmolLM2-360M-Instruct",
+    "smollm-360m": "onnx-community/SmolLM2-360M-Instruct",
+  },
 } as const satisfies Record<ProviderKind, Record<string, ModelSlug>>;
 
 export const REASONING_EFFORT_OPTIONS_BY_PROVIDER = {
   codex: CODEX_REASONING_EFFORT_OPTIONS,
   copilot: [],
+  webgpu: [],
 } as const satisfies Record<ProviderKind, readonly CodexReasoningEffort[]>;
 
 export const DEFAULT_REASONING_EFFORT_BY_PROVIDER = {
   codex: "high",
   copilot: null,
+  webgpu: null,
 } as const satisfies Record<ProviderKind, CodexReasoningEffort | null>;
