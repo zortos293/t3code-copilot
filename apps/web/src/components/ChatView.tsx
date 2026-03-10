@@ -3642,7 +3642,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   isDragOverComposer
                     ? "border-primary/70 bg-accent/30"
                     : interactionMode === "plan"
-                      ? "border-border focus-within:border-amber-500/45"
+                      ? "border-border focus-within:border-warning/45"
                       : "border-border focus-within:border-ring/45"
                 }`}
                 onDragEnter={onComposerDragEnter}
@@ -4054,7 +4054,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             type="submit"
                             className={`flex h-9 w-9 items-center justify-center rounded-full transition-all duration-150 disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8 ${
                               interactionMode === "plan"
-                                ? "bg-amber-500/90 text-white hover:bg-amber-500 hover:scale-105"
+                                ? "bg-warning/90 text-white hover:bg-warning hover:scale-105"
                                 : "bg-primary/90 text-primary-foreground hover:bg-primary hover:scale-105"
                             }`}
                             disabled={
