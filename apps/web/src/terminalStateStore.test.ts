@@ -1,15 +1,46 @@
 import { ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
+import { createJSONStorage } from "zustand/middleware";
 
 import { selectThreadTerminalState, useTerminalStateStore } from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
 
+function createMemoryStorage(): Storage {
+  const backing = new Map<string, string>();
+  return {
+    get length() {
+      return backing.size;
+    },
+    clear() {
+      backing.clear();
+    },
+    getItem(key) {
+      return backing.get(key) ?? null;
+    },
+    key(index) {
+      return [...backing.keys()][index] ?? null;
+    },
+    removeItem(key) {
+      backing.delete(key);
+    },
+    setItem(key, value) {
+      backing.set(key, value);
+    },
+  };
+}
+
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
-    if (typeof localStorage !== "undefined") {
-      localStorage.clear();
-    }
+    const storage = createMemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", {
+      value: storage,
+      configurable: true,
+    });
+    useTerminalStateStore.persist.setOptions({
+      storage: createJSONStorage(() => storage),
+    });
+    localStorage.clear();
     useTerminalStateStore.setState({ terminalStateByThreadId: {} });
   });
 

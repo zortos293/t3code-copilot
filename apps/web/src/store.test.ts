@@ -208,7 +208,7 @@ describe("store read model sync", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
       makeReadModelThread({
-        model: "gpt-5",
+        model: "claude-sonnet-4.6",
         session: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
@@ -224,21 +224,21 @@ describe("store read model sync", () => {
     const next = syncServerReadModel(initialState, readModel);
 
     expect(next.threads[0]?.session?.provider).toBe("copilot");
-    expect(next.threads[0]?.model).toBe("gpt-5");
+    expect(next.threads[0]?.model).toBe("claude-sonnet-4.6");
   });
 
   it("infers copilot for builtin copilot models without a session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
       makeReadModelThread({
-        model: "gpt-5",
+        model: "claude-sonnet-4.6",
         session: null,
       }),
     );
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.model).toBe("gpt-5");
+    expect(next.threads[0]?.model).toBe("claude-sonnet-4.6");
   });
 
   it("preserves the current project order when syncing incoming read model updates", () => {
