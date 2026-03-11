@@ -1711,8 +1711,7 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(
       harness.engine,
       (thread) =>
-        thread.session?.status === "running" &&
-        thread.session?.activeTurnId === "turn-abort-1",
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-abort-1",
     );
 
     // Emit turn.aborted (as the CopilotAdapter does after session.abort()).
@@ -1730,8 +1729,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     const thread = await waitForThread(
       harness.engine,
-      (entry) =>
-        entry.session?.status === "interrupted" && entry.session?.activeTurnId === null,
+      (entry) => entry.session?.status === "interrupted" && entry.session?.activeTurnId === null,
     );
     expect(thread.session?.status).toBe("interrupted");
     expect(thread.session?.activeTurnId).toBeNull();
@@ -1752,10 +1750,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId: asTurnId("turn-pre-abort"),
     });
 
-    await waitForThread(
-      harness.engine,
-      (thread) => thread.session?.status === "running",
-    );
+    await waitForThread(harness.engine, (thread) => thread.session?.status === "running");
 
     harness.emit({
       type: "turn.aborted",
@@ -1769,10 +1764,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    await waitForThread(
-      harness.engine,
-      (entry) => entry.session?.status === "interrupted",
-    );
+    await waitForThread(harness.engine, (entry) => entry.session?.status === "interrupted");
 
     // Send a new turn — the session should accept it and go back to running.
     harness.emit({
@@ -1787,8 +1779,7 @@ describe("ProviderRuntimeIngestion", () => {
     const thread = await waitForThread(
       harness.engine,
       (entry) =>
-        entry.session?.status === "running" &&
-        entry.session?.activeTurnId === "turn-after-abort",
+        entry.session?.status === "running" && entry.session?.activeTurnId === "turn-after-abort",
     );
     expect(thread.session?.status).toBe("running");
     expect(thread.session?.activeTurnId).toBe("turn-after-abort");
