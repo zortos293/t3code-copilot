@@ -488,9 +488,10 @@ function summarizeToolOutput(value: string, limit = 96): string {
 function collapsedToolWorkEntryPreview(
   workEntry: WorkLogEntry,
   primaryPath: string | null,
+  showToolOutputAndDiff: boolean,
 ): string | null {
   if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
-    if (workEntry.output) {
+    if (showToolOutputAndDiff && workEntry.output) {
       return summarizeToolOutput(workEntry.output);
     }
     if (workEntry.command) {
@@ -503,7 +504,7 @@ function collapsedToolWorkEntryPreview(
   if (workEntry.command) {
     return workEntry.command;
   }
-  if (workEntry.output) {
+  if (showToolOutputAndDiff && workEntry.output) {
     return summarizeToolOutput(workEntry.output);
   }
   if (workEntry.detail) {
@@ -519,8 +520,10 @@ function isRichToolWorkEntry(workEntry: WorkLogEntry): boolean {
 const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
   workEntry: WorkLogEntry;
   workEntryIndex: number;
+  showToolOutputAndDiff: boolean;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const { workEntry, workEntryIndex } = props;
+  const { workEntry, workEntryIndex, showToolOutputAndDiff, onOpenTurnDiff } = props;
   const [open, setOpen] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
@@ -531,13 +534,20 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
     workEntry.changedFiles?.slice(primaryPath ? 1 : 0, primaryPath ? 4 : 4) ?? [];
   const hiddenPathCount =
     (workEntry.changedFiles?.length ?? 0) - additionalPaths.length - (primaryPath ? 1 : 0);
-  const preview = collapsedToolWorkEntryPreview(workEntry, primaryPath);
+  const diffTurnId = workEntry.turnId ?? null;
+  const canOpenFileDiff = Boolean(
+    showToolOutputAndDiff &&
+    diffTurnId &&
+    (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change"),
+  );
+  const preview = collapsedToolWorkEntryPreview(workEntry, primaryPath, showToolOutputAndDiff);
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasExpandedDetails = Boolean(
     workEntry.command ||
     primaryPath ||
     additionalPaths.length > 0 ||
-    workEntry.output ||
+    (showToolOutputAndDiff && workEntry.output) ||
+    canOpenFileDiff ||
     typeof workEntry.exitCode === "number",
   );
 
@@ -637,7 +647,20 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
         </div>
       )}
 
-      {workEntry.output && (
+      {canOpenFileDiff && diffTurnId && (
+        <div>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => onOpenTurnDiff(diffTurnId, primaryPath ?? workEntry.changedFiles?.[0])}
+          >
+            View diff
+          </Button>
+        </div>
+      )}
+
+      {showToolOutputAndDiff && workEntry.output && (
         <div className="rounded-md border border-border/55 bg-background/75 px-2.5 py-2">
           <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-foreground/78">
             {workEntry.output}
@@ -4145,6 +4168,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               expandedWorkGroups={expandedWorkGroups}
               onToggleWorkGroup={onToggleWorkGroup}
               onOpenTurnDiff={onOpenTurnDiff}
+              showToolOutputAndDiff={settings.showToolOutputAndDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
@@ -5614,6 +5638,7 @@ interface MessagesTimelineProps {
   expandedWorkGroups: Record<string, boolean>;
   onToggleWorkGroup: (groupId: string) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  showToolOutputAndDiff: boolean;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -5668,6 +5693,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   expandedWorkGroups,
   onToggleWorkGroup,
   onOpenTurnDiff,
+  showToolOutputAndDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -5915,6 +5941,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
                       key={`work-row:${workEntry.id}`}
                       workEntry={workEntry}
                       workEntryIndex={workEntryIndex}
+                      showToolOutputAndDiff={showToolOutputAndDiff}
+                      onOpenTurnDiff={onOpenTurnDiff}
                     />
                   ) : (
                     <SimpleWorkEntryRow

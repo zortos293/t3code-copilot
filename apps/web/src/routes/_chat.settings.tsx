@@ -479,6 +479,40 @@ function SettingsRouteView() {
                   </Button>
                 </div>
               ) : null}
+
+              <div className="mt-3 flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Show tool output and diffs</p>
+                  <p className="text-xs text-muted-foreground">
+                    Show command output and file-change diff actions in tool call work logs.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.showToolOutputAndDiff}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      showToolOutputAndDiff: Boolean(checked),
+                    })
+                  }
+                  aria-label="Show tool output and diffs"
+                />
+              </div>
+
+              {settings.showToolOutputAndDiff !== defaults.showToolOutputAndDiff ? (
+                <div className="mt-3 flex justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      updateSettings({
+                        showToolOutputAndDiff: defaults.showToolOutputAndDiff,
+                      })
+                    }
+                  >
+                    Restore default
+                  </Button>
+                </div>
+              ) : null}
             </section>
 
             <section className="rounded-2xl border border-border bg-card p-5">

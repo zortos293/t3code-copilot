@@ -32,6 +32,7 @@ export const PROVIDER_OPTIONS: Array<{
 export interface WorkLogEntry {
   id: string;
   createdAt: string;
+  turnId?: TurnId | null;
   label: string;
   detail?: string;
   output?: string;
@@ -448,6 +449,7 @@ export function deriveWorkLogEntries(
       const entry: WorkLogEntry = {
         id: activity.id,
         createdAt: activity.createdAt,
+        turnId: activity.turnId,
         label: activity.summary,
         tone: activity.tone === "approval" ? "info" : activity.tone,
         activityKind: activity.kind,

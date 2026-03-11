@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getAppSettingsSnapshot,
   getAppModelOptions,
   getSlashModelOptions,
   normalizeCustomModelSlugs,
@@ -70,5 +71,12 @@ describe("getSlashModelOptions", () => {
     const options = getSlashModelOptions("codex", ["openai/gpt-oss-120b"], "oss", "gpt-5.3-codex");
 
     expect(options.map((option) => option.slug)).toEqual(["openai/gpt-oss-120b"]);
+  });
+});
+
+describe("getAppSettingsSnapshot", () => {
+  it("defaults tool output and diff visibility to enabled", () => {
+    const settings = getAppSettingsSnapshot();
+    expect(settings.showToolOutputAndDiff).toBe(true);
   });
 });

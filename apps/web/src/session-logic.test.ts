@@ -491,6 +491,7 @@ describe("deriveWorkLogEntries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "file-tool",
+        turnId: "turn-file-change",
         kind: "tool.completed",
         summary: "File change complete",
         payload: {
@@ -512,6 +513,7 @@ describe("deriveWorkLogEntries", () => {
       "apps/web/src/components/ChatView.tsx",
       "apps/web/src/session-logic.ts",
     ]);
+    expect(entry?.turnId).toBe("turn-file-change");
   });
 
   it("keeps tool item types for icon rendering", () => {
