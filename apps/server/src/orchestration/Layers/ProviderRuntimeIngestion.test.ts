@@ -1693,4 +1693,104 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+
+  it("maps turn.aborted event into interrupted session status and clears activeTurnId", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Start a turn so the session goes to running with an activeTurnId.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-abort"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-abort-1"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-abort-1",
+    );
+
+    // Emit turn.aborted (as the CopilotAdapter does after session.abort()).
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-abort-1"),
+      payload: {
+        reason: "user requested abort",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "interrupted" && entry.session?.activeTurnId === null,
+    );
+    expect(thread.session?.status).toBe("interrupted");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.session?.lastError).toBeNull();
+  });
+
+  it("accepts a new turn after turn.aborted transitions session back to running", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Start and abort a turn.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-pre-abort"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-pre-abort"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "running",
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-2"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-pre-abort"),
+      payload: {
+        reason: "user abort",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "interrupted",
+    );
+
+    // Send a new turn — the session should accept it and go back to running.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-after-abort"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-after-abort"),
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "running" &&
+        entry.session?.activeTurnId === "turn-after-abort",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.activeTurnId).toBe("turn-after-abort");
+  });
 });
