@@ -9,7 +9,7 @@ import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
-import { ClaudeAI, Gemini, CursorIcon, OpenCodeIcon, type Icon } from "../components/Icons";
+import { OpenAI, ClaudeAI, Gemini, CursorIcon, OpenCodeIcon, type Icon } from "../components/Icons";
 import {
   skillsListQueryOptions,
   skillsToggleMutationOptions,
@@ -46,6 +46,7 @@ function skillColor(name: string): string {
 }
 
 const PLATFORM_ICONS: Record<string, Icon> = {
+  Codex: OpenAI,
   "Claude Code": ClaudeAI,
   Gemini: Gemini,
   Cursor: CursorIcon,
