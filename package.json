@@ -1,6 +1,10 @@
 {
   "name": "@t3tools/monorepo",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zortos293/t3code-copilot"
+  },
   "workspaces": {
     "packages": [
       "apps/*",

@@ -29,6 +29,13 @@ This document covers how to run desktop releases from one tag, first without sig
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+  - otherwise the fork default `zortos293/t3code-copilot`, so local/manual desktop builds still publish updater metadata against this fork.
+- Release workflow default:
+  - `.github/workflows/release.yml` exports `T3CODE_DESKTOP_UPDATE_REPOSITORY` as `${{ vars.T3CODE_DESKTOP_UPDATE_REPOSITORY || github.repository }}`.
+  - leave it unset to use the current repository, or define the repository variable to point packaged apps at another release source.
+- Marketing release links:
+  - default to `zortos293/t3code-copilot`
+  - set `PUBLIC_T3CODE_RELEASE_REPOSITORY` at build time to override the releases page/API source
 - Temporary private-repo auth workaround:
   - set `T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN` (or `GH_TOKEN`) in the desktop app runtime environment.
   - the app forwards it as an `Authorization: Bearer <token>` request header for updater HTTP calls.

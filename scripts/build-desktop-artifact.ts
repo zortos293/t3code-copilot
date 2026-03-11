@@ -10,6 +10,7 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { DEFAULT_GITHUB_REPOSITORY, parseGitHubRepository } from "@t3tools/shared/githubRepository";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -443,19 +444,17 @@ function resolveGitHubPublishConfig():
       readonly releaseType: "release";
     }
   | undefined {
-  const rawRepo =
+  const repository = parseGitHubRepository(
     process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
-    process.env.GITHUB_REPOSITORY?.trim() ||
-    "";
-  if (!rawRepo) return undefined;
-
-  const [owner, repo, ...rest] = rawRepo.split("/");
-  if (!owner || !repo || rest.length > 0) return undefined;
+      process.env.GITHUB_REPOSITORY?.trim() ||
+      DEFAULT_GITHUB_REPOSITORY,
+  );
+  if (!repository) return undefined;
 
   return {
     provider: "github",
-    owner,
-    repo,
+    owner: repository.owner,
+    repo: repository.repo,
     releaseType: "release",
   };
 }

@@ -34,6 +34,7 @@
       "name": "@t3tools/marketing",
       "version": "0.0.0",
       "dependencies": {
+        "@t3tools/shared": "workspace:*",
         "astro": "^5.7.13",
       },
       "devDependencies": {

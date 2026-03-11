@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./githubRepository": {
+      "types": "./src/githubRepository.ts",
+      "import": "./src/githubRepository.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"
