@@ -196,7 +196,9 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
 }
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
-const COPILOT_MODEL_SLUGS = new Set<string>(getModelOptions("copilot").map((option) => option.slug));
+const COPILOT_MODEL_SLUGS = new Set<string>(
+  getModelOptions("copilot").map((option) => option.slug),
+);
 
 function inferProviderForThreadModel(input: {
   readonly model: string;

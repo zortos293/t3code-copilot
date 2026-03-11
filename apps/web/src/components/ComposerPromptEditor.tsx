@@ -683,7 +683,9 @@ function ComposerMentionBackspacePlugin() {
 
         const anchorNode = selection.anchor.getNode();
         const removeMentionNode = (candidate: unknown): boolean => {
-          if (!((candidate instanceof ComposerMentionNode) || (candidate instanceof ComposerSkillNode))) {
+          if (
+            !(candidate instanceof ComposerMentionNode || candidate instanceof ComposerSkillNode)
+          ) {
             return false;
           }
           const mentionStart = getAbsoluteOffsetForPoint(candidate, 0);

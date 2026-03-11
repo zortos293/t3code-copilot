@@ -537,10 +537,10 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasExpandedDetails = Boolean(
     workEntry.command ||
-      primaryPath ||
-      additionalPaths.length > 0 ||
-      workEntry.output ||
-      typeof workEntry.exitCode === "number",
+    primaryPath ||
+    additionalPaths.length > 0 ||
+    workEntry.output ||
+    typeof workEntry.exitCode === "number",
   );
 
   const summaryRow = (
@@ -602,7 +602,9 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
           title={workEntry.command}
         >
           <TerminalIcon className="size-3 shrink-0 text-muted-foreground/65" />
-          <span className="truncate font-mono text-[10px] text-foreground/78">{workEntry.command}</span>
+          <span className="truncate font-mono text-[10px] text-foreground/78">
+            {workEntry.command}
+          </span>
         </div>
       )}
 
@@ -701,7 +703,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       }}
     >
       <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
-        <span className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}>
+        <span
+          className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
+        >
           <EntryIcon className="size-3" />
         </span>
         <div className="min-w-0 flex-1 overflow-hidden animate-in fade-in duration-300">
@@ -983,9 +987,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 text-muted-foreground/80" />
       ) : null}
-      {props.item.type === "skill" ? (
-        <BoxIcon className="size-4 shrink-0 text-violet-500" />
-      ) : null}
+      {props.item.type === "skill" ? <BoxIcon className="size-4 shrink-0 text-violet-500" /> : null}
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model
@@ -997,7 +999,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         ) : null}
         <span className="whitespace-nowrap font-medium">{props.item.label}</span>
       </span>
-      <span className="min-w-0 truncate text-muted-foreground/70 text-xs">{props.item.description}</span>
+      <span className="min-w-0 truncate text-muted-foreground/70 text-xs">
+        {props.item.description}
+      </span>
     </CommandItem>
   );
 });
@@ -1419,7 +1423,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   ]);
   const selectedCopilotModelMetadata =
     selectedProvider === "copilot"
-      ? copilotProviderModels.find((model) => model.id === selectedModel) ?? null
+      ? (copilotProviderModels.find((model) => model.id === selectedModel) ?? null)
       : null;
   const reasoningOptions =
     selectedProvider === "codex"
@@ -1812,7 +1816,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
   const isSkillTrigger = composerTriggerKind === "slash-skill";
-  const skillsQuery = useQuery({ ...skillsListQueryOptions(), enabled: isSkillTrigger && isElectron });
+  const skillsQuery = useQuery({
+    ...skillsListQueryOptions(),
+    enabled: isSkillTrigger && isElectron,
+  });
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1836,39 +1843,44 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      const baseSlashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = [
-        {
-          id: "slash:model",
-          type: "slash-command",
-          command: "model",
-          label: "/model",
-          description: "Switch response model for this thread",
-        },
-        {
-          id: "slash:plan",
-          type: "slash-command",
-          command: "plan",
-          label: "/plan",
-          description: "Switch this thread into plan mode",
-        },
-        {
-          id: "slash:default",
-          type: "slash-command",
-          command: "default",
-          label: "/default",
-          description: "Switch this thread back to normal chat mode",
-        },
-      ];
-
-      const slashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = isElectron
-        ? [...baseSlashCommandItems, {
-            id: "slash:skills",
+      const baseSlashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> =
+        [
+          {
+            id: "slash:model",
             type: "slash-command",
-            command: "skills",
-            label: "/skills",
-            description: "Use a skill in this message",
-          }]
-        : baseSlashCommandItems;
+            command: "model",
+            label: "/model",
+            description: "Switch response model for this thread",
+          },
+          {
+            id: "slash:plan",
+            type: "slash-command",
+            command: "plan",
+            label: "/plan",
+            description: "Switch this thread into plan mode",
+          },
+          {
+            id: "slash:default",
+            type: "slash-command",
+            command: "default",
+            label: "/default",
+            description: "Switch this thread back to normal chat mode",
+          },
+        ];
+
+      const slashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> =
+        isElectron
+          ? [
+              ...baseSlashCommandItems,
+              {
+                id: "slash:skills",
+                type: "slash-command",
+                command: "skills",
+                label: "/skills",
+                description: "Use a skill in this message",
+              },
+            ]
+          : baseSlashCommandItems;
 
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
@@ -6344,11 +6356,13 @@ function pickCopilotQuotaSnapshot(
 ): ServerProviderQuotaSnapshot | null {
   if (!quotaSnapshots || quotaSnapshots.length === 0) return null;
 
-  return quotaSnapshots.toSorted((left, right) => {
-    const priorityDiff = getCopilotQuotaPriority(left.key) - getCopilotQuotaPriority(right.key);
-    if (priorityDiff !== 0) return priorityDiff;
-    return left.key.localeCompare(right.key);
-  })[0] ?? null;
+  return (
+    quotaSnapshots.toSorted((left, right) => {
+      const priorityDiff = getCopilotQuotaPriority(left.key) - getCopilotQuotaPriority(right.key);
+      if (priorityDiff !== 0) return priorityDiff;
+      return left.key.localeCompare(right.key);
+    })[0] ?? null
+  );
 }
 
 function formatCopilotQuotaResetDate(value: string | undefined): string | null {
@@ -6374,9 +6388,7 @@ function deriveCopilotQuotaSummary(
 
   const remainingPercent = normalizeCopilotRemainingPercentage(snapshot.remainingPercentage);
   const resetDate = formatCopilotQuotaResetDate(snapshot.resetDate);
-  const detailParts = [
-    `${snapshot.remainingRequests}/${snapshot.entitlementRequests} remaining`,
-  ];
+  const detailParts = [`${snapshot.remainingRequests}/${snapshot.entitlementRequests} remaining`];
   if (resetDate) {
     detailParts.push(`resets ${resetDate}`);
   }
@@ -6415,7 +6427,7 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     [props.copilotModels],
   );
   const selectedCopilotModel =
-    props.provider === "copilot" ? copilotModelById.get(props.model) ?? null : null;
+    props.provider === "copilot" ? (copilotModelById.get(props.model) ?? null) : null;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
 
   return (

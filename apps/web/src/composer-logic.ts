@@ -72,10 +72,7 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
 }
 
 function collapsedSegmentLength(
-  segment:
-    | { type: "text"; text: string }
-    | { type: "mention" }
-    | { type: "skill" },
+  segment: { type: "text"; text: string } | { type: "mention" } | { type: "skill" },
 ): number {
   return segment.type === "text" ? segment.text.length : 1;
 }

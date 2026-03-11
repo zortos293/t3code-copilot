@@ -1,7 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftIcon, BoxIcon, LoaderIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  BoxIcon,
+  LoaderIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  Trash2Icon,
+} from "lucide-react";
 
 import type { SkillMetadata, SkillSearchResultEntry } from "@t3tools/contracts";
 import { isElectron } from "../env";
@@ -44,7 +51,6 @@ function skillColor(name: string): string {
   return SKILL_COLORS[Math.abs(hash) % SKILL_COLORS.length]!;
 }
 
-
 const installCountFormatter = new Intl.NumberFormat();
 
 function formatSkillDisplayName(name: string): string {
@@ -61,8 +67,6 @@ function formatInstallCount(installs: number): string {
 function mutationErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
-
-
 
 // ── Skill Card ──────────────────────────────────────────────────────
 
@@ -138,9 +142,7 @@ function SearchResultCard({
     <div className="flex items-start gap-3 rounded-xl border border-border bg-card p-4">
       <BoxIcon className={`mt-0.5 size-5 shrink-0 ${skillColor(result.name)}`} />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground">
-          {formatSkillDisplayName(result.name)}
-        </p>
+        <p className="text-sm font-medium text-foreground">{formatSkillDisplayName(result.name)}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">{result.source}</p>
         <p className="mt-0.5 text-[10px] text-muted-foreground/60">
           {formatInstallCount(result.installs)}
@@ -234,7 +236,12 @@ function SkillDetailView({
           ) : contentQuery.isError ? (
             <div className="rounded-xl border border-border bg-card p-6 text-center">
               <p className="text-sm text-destructive">Failed to load skill content.</p>
-              <Button size="xs" variant="outline" className="mt-3" onClick={() => void contentQuery.refetch()}>
+              <Button
+                size="xs"
+                variant="outline"
+                className="mt-3"
+                onClick={() => void contentQuery.refetch()}
+              >
                 Retry
               </Button>
             </div>
@@ -250,7 +257,9 @@ function SkillDetailView({
               <ChatMarkdown text={contentQuery.data.content} cwd={undefined} />
             </Suspense>
           ) : (
-            <p className="py-8 text-sm text-muted-foreground">No content available for this skill.</p>
+            <p className="py-8 text-sm text-muted-foreground">
+              No content available for this skill.
+            </p>
           )}
         </div>
       </div>
@@ -309,9 +318,17 @@ function SkillsRouteView() {
         onSuccess: (result) => {
           if (result.success) {
             setSelectedSkillName(null);
-            toastManager.add({ type: "success", title: "Skill uninstalled", description: result.message });
+            toastManager.add({
+              type: "success",
+              title: "Skill uninstalled",
+              description: result.message,
+            });
           } else {
-            toastManager.add({ type: "error", title: "Uninstall failed", description: result.message });
+            toastManager.add({
+              type: "error",
+              title: "Uninstall failed",
+              description: result.message,
+            });
           }
         },
         onError: (error) => {
@@ -331,9 +348,17 @@ function SkillsRouteView() {
       {
         onSuccess: (result) => {
           if (result.success) {
-            toastManager.add({ type: "success", title: "Skill installed", description: result.message });
+            toastManager.add({
+              type: "success",
+              title: "Skill installed",
+              description: result.message,
+            });
           } else {
-            toastManager.add({ type: "error", title: "Install failed", description: result.message });
+            toastManager.add({
+              type: "error",
+              title: "Install failed",
+              description: result.message,
+            });
           }
         },
         onError: (error) => {
@@ -354,8 +379,7 @@ function SkillsRouteView() {
     const lower = normalizedSearch.toLowerCase();
     return skills.filter(
       (skill) =>
-        skill.name.toLowerCase().includes(lower) ||
-        skill.description.toLowerCase().includes(lower),
+        skill.name.toLowerCase().includes(lower) || skill.description.toLowerCase().includes(lower),
     );
   }, [normalizedSearch, skills]);
 
@@ -400,8 +424,7 @@ function SkillsRouteView() {
             onBack={() => setSelectedSkillName(null)}
             onToggle={handleToggle}
             isToggling={
-              toggleMutation.isPending &&
-              toggleMutation.variables?.skillName === selectedSkill.name
+              toggleMutation.isPending && toggleMutation.variables?.skillName === selectedSkill.name
             }
             onUninstall={handleUninstall}
             isUninstalling={
@@ -414,9 +437,7 @@ function SkillsRouteView() {
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               <header className="space-y-1">
                 <h1 className="text-2xl font-semibold tracking-tight text-foreground">Skills</h1>
-                <p className="text-sm text-muted-foreground">
-                  Give your agent superpowers.
-                </p>
+                <p className="text-sm text-muted-foreground">Give your agent superpowers.</p>
               </header>
 
               <div className="flex items-center gap-3">
@@ -460,7 +481,12 @@ function SkillsRouteView() {
                 ) : skillsQuery.isError ? (
                   <div className="rounded-xl border border-border bg-card p-6 text-center">
                     <p className="text-sm text-destructive">Failed to load skills.</p>
-                    <Button size="xs" variant="outline" className="mt-3" onClick={() => void skillsQuery.refetch()}>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      className="mt-3"
+                      onClick={() => void skillsQuery.refetch()}
+                    >
                       Retry
                     </Button>
                   </div>

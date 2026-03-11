@@ -417,7 +417,7 @@ export default function Sidebar() {
       },
     ): Promise<void> => {
       const activeThread = routeThreadId
-        ? threads.find((thread) => thread.id === routeThreadId) ?? null
+        ? (threads.find((thread) => thread.id === routeThreadId) ?? null)
         : null;
       const activeDraftState = routeThreadId ? (draftByThreadId[routeThreadId] ?? null) : null;
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;

@@ -54,7 +54,9 @@ export function mapCopilotModel(model: ModelInfo): ServerProviderModel {
     ...(model.supportedReasoningEfforts && model.supportedReasoningEfforts.length > 0
       ? { supportedReasoningEfforts: [...model.supportedReasoningEfforts] }
       : {}),
-    ...(model.defaultReasoningEffort ? { defaultReasoningEffort: model.defaultReasoningEffort } : {}),
+    ...(model.defaultReasoningEffort
+      ? { defaultReasoningEffort: model.defaultReasoningEffort }
+      : {}),
     ...(typeof model.billing?.multiplier === "number"
       ? { billingMultiplier: model.billing.multiplier }
       : {}),
@@ -71,8 +73,12 @@ interface CopilotQuotaSnapshotInfo {
 }
 
 function compareCopilotQuotaKeys(left: string, right: string): number {
-  const leftPriority = COPILOT_QUOTA_PRIORITY.indexOf(left as (typeof COPILOT_QUOTA_PRIORITY)[number]);
-  const rightPriority = COPILOT_QUOTA_PRIORITY.indexOf(right as (typeof COPILOT_QUOTA_PRIORITY)[number]);
+  const leftPriority = COPILOT_QUOTA_PRIORITY.indexOf(
+    left as (typeof COPILOT_QUOTA_PRIORITY)[number],
+  );
+  const rightPriority = COPILOT_QUOTA_PRIORITY.indexOf(
+    right as (typeof COPILOT_QUOTA_PRIORITY)[number],
+  );
   const normalizedLeftPriority = leftPriority === -1 ? Number.POSITIVE_INFINITY : leftPriority;
   const normalizedRightPriority = rightPriority === -1 ? Number.POSITIVE_INFINITY : rightPriority;
   return normalizedLeftPriority - normalizedRightPriority || left.localeCompare(right);
@@ -474,9 +480,7 @@ export const ProviderHealthLive = Layer.effect(
     const providerStatusesFiber = yield* Effect.all(
       [checkCodexProviderStatus, checkCopilotProviderStatus],
       { concurrency: "unbounded" },
-    ).pipe(
-      Effect.forkScoped,
-    );
+    ).pipe(Effect.forkScoped);
 
     return {
       getStatuses: Fiber.join(providerStatusesFiber),

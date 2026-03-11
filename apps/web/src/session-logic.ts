@@ -428,7 +428,9 @@ export function deriveWorkLogEntries(
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId || activity.turnId === null : true))
+    .filter((activity) =>
+      latestTurnId ? activity.turnId === latestTurnId || activity.turnId === null : true,
+    )
     .filter((activity) => (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true))
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
@@ -566,11 +568,14 @@ function extractToolExitCode(payload: Record<string, unknown> | null): number | 
   return candidates.find((candidate) => candidate !== null) ?? null;
 }
 
-function stripTrailingExitCode(
-  value: string,
-): { output: string | null; exitCode?: number | undefined } {
+function stripTrailingExitCode(value: string): {
+  output: string | null;
+  exitCode?: number | undefined;
+} {
   const trimmed = value.trim();
-  const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code (?<code>\d+)>)\s*$/i.exec(trimmed);
+  const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code (?<code>\d+)>)\s*$/i.exec(
+    trimmed,
+  );
   if (!match?.groups) {
     return {
       output: trimmed.length > 0 ? trimmed : null,
@@ -584,9 +589,10 @@ function stripTrailingExitCode(
   };
 }
 
-function extractToolOutputEnvelope(
-  payload: Record<string, unknown> | null,
-): { output?: string | undefined; exitCode?: number | undefined } {
+function extractToolOutputEnvelope(payload: Record<string, unknown> | null): {
+  output?: string | undefined;
+  exitCode?: number | undefined;
+} {
   const data = asRecord(payload?.data);
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
@@ -612,7 +618,9 @@ function extractToolOutputEnvelope(
   };
 }
 
-function extractWorkLogItemType(payload: Record<string, unknown> | null): WorkLogEntry["itemType"] | undefined {
+function extractWorkLogItemType(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["itemType"] | undefined {
   switch (payload?.itemType) {
     case "command_execution":
     case "file_change":

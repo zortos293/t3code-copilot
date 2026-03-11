@@ -890,7 +890,8 @@ describe("ProviderRuntimeIngestion", () => {
     await waitForThread(
       harness.engine,
       (thread) =>
-        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-streaming-lag",
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-streaming-lag",
     );
 
     harness.emit({
@@ -1312,12 +1313,10 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(
-      harness.engine,
-      (entry) =>
-        entry.activities.some(
-          (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-rendering",
-        ),
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-rendering",
+      ),
     );
 
     const activity = thread.activities.find(

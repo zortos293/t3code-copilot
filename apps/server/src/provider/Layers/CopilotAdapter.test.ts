@@ -17,11 +17,7 @@ class FakeCopilotSession {
   public readonly sessionId: string;
 
   public readonly modeSetImpl = vi.fn(
-    async ({
-      mode,
-    }: {
-      mode: "interactive" | "plan" | "autopilot";
-    }) => ({
+    async ({ mode }: { mode: "interactive" | "plan" | "autopilot" }) => ({
       mode,
     }),
   );
@@ -32,10 +28,10 @@ class FakeCopilotSession {
       content: string | null;
       path: string | null;
     }> => ({
-        exists: false,
-        content: null,
-        path: null,
-      }),
+      exists: false,
+      content: null,
+      path: null,
+    }),
   );
 
   public readonly sendImpl = vi.fn(
@@ -206,7 +202,10 @@ planLayer("CopilotAdapterLive proposed plan events", (it) => {
         attachments: [],
       });
 
-      const eventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(Stream.runCollect, Effect.forkChild);
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
       planSession.emit({
         id: "evt-plan-changed",

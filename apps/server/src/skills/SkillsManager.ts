@@ -43,8 +43,12 @@ export interface SkillsManagerShape {
   readonly toggle: (input: SkillsToggleInput) => Effect.Effect<SkillsToggleResult, SkillsError>;
   readonly search: (input: SkillsSearchInput) => Effect.Effect<SkillsSearchResult, SkillsError>;
   readonly install: (input: SkillsInstallInput) => Effect.Effect<SkillsInstallResult, SkillsError>;
-  readonly uninstall: (input: SkillsUninstallInput) => Effect.Effect<SkillsUninstallResult, SkillsError>;
-  readonly readContent: (input: SkillsReadContentInput) => Effect.Effect<SkillsReadContentResult, SkillsError>;
+  readonly uninstall: (
+    input: SkillsUninstallInput,
+  ) => Effect.Effect<SkillsUninstallResult, SkillsError>;
+  readonly readContent: (
+    input: SkillsReadContentInput,
+  ) => Effect.Effect<SkillsReadContentResult, SkillsError>;
 }
 
 export class SkillsManager extends ServiceMap.Service<SkillsManager, SkillsManagerShape>()(
@@ -122,7 +126,9 @@ async function pathExists(candidatePath: string): Promise<boolean> {
   }
 }
 
-async function resolveSkillDirectoryState(skillName: string): Promise<SkillDirectoryState | undefined> {
+async function resolveSkillDirectoryState(
+  skillName: string,
+): Promise<SkillDirectoryState | undefined> {
   const enabledSkillDir = path.join(ENABLED_SKILLS_DIR, skillName);
   if (await pathExists(enabledSkillDir)) {
     return { enabled: true, skillDir: enabledSkillDir };
@@ -219,8 +225,7 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
       skills.sort((a, b) => a.name.localeCompare(b.name));
       return { skills } satisfies SkillsListResult;
     },
-    catch: (cause) =>
-      new SkillsError({ message: `Failed to list skills`, cause }),
+    catch: (cause) => new SkillsError({ message: `Failed to list skills`, cause }),
   });
 }
 
@@ -283,8 +288,7 @@ function searchSkills(input: SkillsSearchInput): Effect.Effect<SkillsSearchResul
       }));
       return { skills } satisfies SkillsSearchResult;
     },
-    catch: (cause) =>
-      new SkillsError({ message: `Failed to search skills.sh`, cause }),
+    catch: (cause) => new SkillsError({ message: `Failed to search skills.sh`, cause }),
   });
 }
 
@@ -303,10 +307,13 @@ function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallRes
     ["skills", "add", input.source, "-s", input.skillName, "-g", "-y"],
     120_000,
   ).pipe(
-    Effect.map(() => ({
-      success: true,
-      message: `Successfully installed ${input.skillName}`,
-    }) satisfies SkillsInstallResult),
+    Effect.map(
+      () =>
+        ({
+          success: true,
+          message: `Successfully installed ${input.skillName}`,
+        }) satisfies SkillsInstallResult,
+    ),
     Effect.catch((error: SkillsError) =>
       Effect.succeed({
         success: false,
@@ -317,7 +324,9 @@ function installSkill(input: SkillsInstallInput): Effect.Effect<SkillsInstallRes
 }
 
 /** Uninstall a skill by removing it from both enabled and disabled storage. */
-function uninstallSkill(input: SkillsUninstallInput): Effect.Effect<SkillsUninstallResult, SkillsError> {
+function uninstallSkill(
+  input: SkillsUninstallInput,
+): Effect.Effect<SkillsUninstallResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
       assertValidSkillSlug(input.skillName);
@@ -358,7 +367,9 @@ function uninstallSkill(input: SkillsUninstallInput): Effect.Effect<SkillsUninst
 }
 
 /** Read the full SKILL.md content (stripping YAML frontmatter) for a given skill. */
-function readContent(input: SkillsReadContentInput): Effect.Effect<SkillsReadContentResult, SkillsError> {
+function readContent(
+  input: SkillsReadContentInput,
+): Effect.Effect<SkillsReadContentResult, SkillsError> {
   return Effect.tryPromise({
     try: async () => {
       assertValidSkillSlug(input.skillName);

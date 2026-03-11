@@ -19,10 +19,7 @@ export function completionTurnRefs(state: CopilotTurnTrackingState) {
   };
 }
 
-export function beginCopilotTurn(
-  state: CopilotTurnTrackingState,
-  providerTurnId: TurnId,
-): void {
+export function beginCopilotTurn(state: CopilotTurnTrackingState, providerTurnId: TurnId): void {
   state.pendingCompletionTurnId = undefined;
   state.pendingCompletionProviderTurnId = undefined;
   state.pendingTurnUsage = undefined;
@@ -51,9 +48,7 @@ export function clearTurnTracking(state: CopilotTurnTrackingState): void {
   state.pendingTurnUsage = undefined;
 }
 
-export function assistantUsageFields(
-  usage: CopilotAssistantUsage | undefined,
-): {
+export function assistantUsageFields(usage: CopilotAssistantUsage | undefined): {
   usage?: CopilotAssistantUsage;
   modelUsage?: { model: string };
   totalCostUsd?: number;
