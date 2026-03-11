@@ -28,12 +28,8 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
-  showCommandOutput: Schema.Boolean.pipe(
-    Schema.withConstructorDefault(() => Option.some(true)),
-  ),
-  showFileChangeDiffs: Schema.Boolean.pipe(
-    Schema.withConstructorDefault(() => Option.some(true)),
-  ),
+  showCommandOutput: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  showFileChangeDiffs: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
   customCodexModels: Schema.Array(Schema.String).pipe(
     Schema.withConstructorDefault(() => Option.some([])),
   ),

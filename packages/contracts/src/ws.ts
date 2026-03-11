@@ -45,7 +45,6 @@ import {
 } from "./skills";
 import { ServerConfigUpdatedPayload } from "./server";
 
-
 // ── WebSocket RPC Method Names ───────────────────────────────────────
 
 export const WS_METHODS = {
