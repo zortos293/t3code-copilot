@@ -9,7 +9,6 @@ import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
-import { OpenAI, ClaudeAI, Gemini, CursorIcon, OpenCodeIcon, type Icon } from "../components/Icons";
 import {
   skillsListQueryOptions,
   skillsToggleMutationOptions,
@@ -45,13 +44,7 @@ function skillColor(name: string): string {
   return SKILL_COLORS[Math.abs(hash) % SKILL_COLORS.length]!;
 }
 
-const PLATFORM_ICONS: Record<string, Icon> = {
-  Codex: OpenAI,
-  "Claude Code": ClaudeAI,
-  Gemini: Gemini,
-  Cursor: CursorIcon,
-  OpenCode: OpenCodeIcon,
-};
+
 const installCountFormatter = new Intl.NumberFormat();
 
 function formatSkillDisplayName(name: string): string {
@@ -69,25 +62,7 @@ function mutationErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
 }
 
-export function AgentBadges({ agents }: { agents: ReadonlyArray<string> }) {
-  return agents.map((agent) => {
-    const PlatformIcon = PLATFORM_ICONS[agent];
-    return PlatformIcon ? (
-      <PlatformIcon
-        key={agent}
-        className="size-3.5 shrink-0 text-muted-foreground"
-        aria-label={agent}
-      />
-    ) : (
-      <span
-        key={agent}
-        className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-      >
-        {agent}
-      </span>
-    );
-  });
-}
+
 
 // ── Skill Card ──────────────────────────────────────────────────────
 
@@ -119,7 +94,6 @@ function SkillCard({
             <p className="text-sm font-medium text-foreground">
               {formatSkillDisplayName(skill.name)}
             </p>
-            <AgentBadges agents={skill.agents} />
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{skill.description}</p>
         </div>
@@ -221,7 +195,6 @@ function SkillDetailView({
             <h2 className="text-base font-semibold text-foreground">
               {formatSkillDisplayName(skill.name)}
             </h2>
-            <AgentBadges agents={skill.agents} />
           </div>
           {skill.description && (
             <p className="text-xs text-muted-foreground">{skill.description}</p>
