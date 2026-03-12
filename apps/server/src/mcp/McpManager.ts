@@ -66,6 +66,66 @@ function assertValidServerName(name: string): void {
   }
 }
 
+/** Validate that an add/update input has a valid transport configuration. */
+function assertValidTransport(input: {
+  command?: string | undefined;
+  url?: string | undefined;
+  bearerToken?: string | undefined;
+  provider: "codex" | "copilot";
+}): void {
+  if (!input.command && !input.url) {
+    throw new Error("Either command (stdio) or url (http) must be provided");
+  }
+  if (input.command && input.url) {
+    throw new Error("Cannot specify both command and url — pick stdio or http transport");
+  }
+  if (input.bearerToken && input.provider !== "codex") {
+    throw new Error("bearerToken is only supported for Codex provider");
+  }
+}
+
+// ── Per-file mutex to serialize config read-modify-write ─────────────
+
+class Mutex {
+  private queue: (() => void)[] = [];
+  private locked = false;
+
+  async acquire(): Promise<() => void> {
+    if (!this.locked) {
+      this.locked = true;
+      return () => this.release();
+    }
+    return new Promise<() => void>((resolve) => {
+      this.queue.push(() => resolve(() => this.release()));
+    });
+  }
+
+  private release(): void {
+    const next = this.queue.shift();
+    if (next) {
+      next();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
+const codexMutex = new Mutex();
+const copilotMutex = new Mutex();
+const disabledMutex = new Mutex();
+
+/** Run fn while holding the mutexes for the given provider + disabled cache. */
+async function withConfigLock<T>(provider: "codex" | "copilot", fn: () => Promise<T>): Promise<T> {
+  const configRelease = await (provider === "codex" ? codexMutex : copilotMutex).acquire();
+  const disabledRelease = await disabledMutex.acquire();
+  try {
+    return await fn();
+  } finally {
+    disabledRelease();
+    configRelease();
+  }
+}
+
 // ── Disabled cache (preserves configs of disabled servers) ───────────
 
 interface DisabledEntry {
@@ -79,8 +139,9 @@ async function readDisabledCache(): Promise<DisabledCache> {
   try {
     const raw = await fsp.readFile(DISABLED_CACHE_PATH, "utf-8");
     return JSON.parse(raw) as DisabledCache;
-  } catch {
-    return {};
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
   }
 }
 
@@ -100,8 +161,9 @@ async function readCodexConfig(): Promise<CodexTomlConfig> {
   try {
     const raw = await fsp.readFile(CODEX_CONFIG_PATH, "utf-8");
     return parseToml(raw) as CodexTomlConfig;
-  } catch {
-    return {};
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
   }
 }
 
@@ -145,8 +207,9 @@ async function readCopilotConfig(): Promise<CopilotMcpConfig> {
   try {
     const raw = await fsp.readFile(COPILOT_MCP_PATH, "utf-8");
     return JSON.parse(raw) as CopilotMcpConfig;
-  } catch {
-    return {};
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
   }
 }
 
@@ -346,8 +409,9 @@ function listServers(): Effect.Effect<McpListResult, McpError> {
         }
       }
 
-      // Disabled servers (from cache)
-      for (const [name, entry] of Object.entries(disabled)) {
+      // Disabled servers (from cache — keys are "provider:name")
+      for (const [cacheKey, entry] of Object.entries(disabled)) {
+        const name = cacheKey.slice(entry.provider.length + 1);
         const alreadyListed = servers.some((s) => s.name === name && s.provider === entry.provider);
         if (!alreadyListed) {
           if (entry.provider === "codex") {
@@ -367,85 +431,86 @@ function listServers(): Effect.Effect<McpListResult, McpError> {
 
 function addServer(input: McpAddInput): Effect.Effect<McpAddResult, McpError> {
   return Effect.tryPromise({
-    try: async () => {
-      assertValidServerName(input.name);
+    try: () =>
+      withConfigLock(input.provider, async () => {
+        assertValidServerName(input.name);
+        assertValidTransport(input);
+        if (input.provider === "codex") {
+          const config = await readCodexConfig();
+          if (!config.mcp_servers) config.mcp_servers = {};
 
-      if (input.provider === "codex") {
-        const config = await readCodexConfig();
-        if (!config.mcp_servers) config.mcp_servers = {};
+          if (config.mcp_servers[input.name]) {
+            return { success: false, message: `"${input.name}" already exists in Codex config` };
+          }
 
-        if (config.mcp_servers[input.name]) {
-          return { success: false, message: `"${input.name}" already exists in Codex config` };
+          const entry: Record<string, unknown> = {};
+          if (input.command) entry.command = input.command;
+          if (input.args?.length) entry.args = [...input.args];
+          if (input.url) entry.url = input.url;
+          if (input.bearerToken) entry.bearer_token_env_var = input.bearerToken;
+          config.mcp_servers[input.name] = entry;
+          await writeCodexConfig(config);
+        } else {
+          const config = await readCopilotConfig();
+          if (!config.mcpServers) config.mcpServers = {};
+
+          if (config.mcpServers[input.name]) {
+            return { success: false, message: `"${input.name}" already exists in Copilot config` };
+          }
+
+          const entry: Record<string, unknown> = {};
+          if (input.command) {
+            entry.type = "stdio";
+            entry.command = input.command;
+          }
+          if (input.args?.length) entry.args = [...input.args];
+          if (input.url) {
+            if (!input.command) entry.type = "http";
+            entry.url = input.url;
+          }
+          if (input.headers && Object.keys(input.headers).length > 0) {
+            entry.headers = { ...input.headers };
+          }
+          config.mcpServers[input.name] = entry;
+          await writeCopilotConfig(config);
         }
 
-        const entry: Record<string, unknown> = {};
-        if (input.command) entry.command = input.command;
-        if (input.args?.length) entry.args = [...input.args];
-        if (input.url) entry.url = input.url;
-        if (input.bearerToken) entry.bearer_token_env_var = input.bearerToken;
-        config.mcp_servers[input.name] = entry;
-        await writeCodexConfig(config);
-      } else {
-        const config = await readCopilotConfig();
-        if (!config.mcpServers) config.mcpServers = {};
-
-        if (config.mcpServers[input.name]) {
-          return { success: false, message: `"${input.name}" already exists in Copilot config` };
-        }
-
-        const entry: Record<string, unknown> = {};
-        if (input.command) {
-          entry.type = "stdio";
-          entry.command = input.command;
-        }
-        if (input.args?.length) entry.args = [...input.args];
-        if (input.url) {
-          if (!input.command) entry.type = "http";
-          entry.url = input.url;
-        }
-        if (input.headers && Object.keys(input.headers).length > 0) {
-          entry.headers = { ...input.headers };
-        }
-        config.mcpServers[input.name] = entry;
-        await writeCopilotConfig(config);
-      }
-
-      return { success: true, message: `Added "${input.name}" to ${input.provider}` };
-    },
+        return { success: true, message: `Added "${input.name}" to ${input.provider}` };
+      }),
     catch: (cause) => new McpError({ message: `Failed to add MCP server: ${input.name}`, cause }),
   });
 }
 
 function removeServer(input: McpRemoveInput): Effect.Effect<McpRemoveResult, McpError> {
   return Effect.tryPromise({
-    try: async () => {
-      // Remove from native config
-      if (input.provider === "codex") {
-        const config = await readCodexConfig();
-        if (!config.mcp_servers?.[input.name]) {
-          return { success: false, message: `"${input.name}" not found in Codex config` };
+    try: () =>
+      withConfigLock(input.provider, async () => {
+        if (input.provider === "codex") {
+          const config = await readCodexConfig();
+          if (!config.mcp_servers?.[input.name]) {
+            return { success: false, message: `"${input.name}" not found in Codex config` };
+          }
+          delete config.mcp_servers[input.name];
+          await writeCodexConfig(config);
+        } else {
+          const config = await readCopilotConfig();
+          if (!config.mcpServers?.[input.name]) {
+            return { success: false, message: `"${input.name}" not found in Copilot config` };
+          }
+          delete config.mcpServers[input.name];
+          await writeCopilotConfig(config);
         }
-        delete config.mcp_servers[input.name];
-        await writeCodexConfig(config);
-      } else {
-        const config = await readCopilotConfig();
-        if (!config.mcpServers?.[input.name]) {
-          return { success: false, message: `"${input.name}" not found in Copilot config` };
+
+        // Also remove from disabled cache if present
+        const disabled = await readDisabledCache();
+        const key = `${input.provider}:${input.name}`;
+        if (disabled[key]) {
+          delete disabled[key];
+          await writeDisabledCache(disabled);
         }
-        delete config.mcpServers[input.name];
-        await writeCopilotConfig(config);
-      }
 
-      // Also remove from disabled cache if present
-      const disabled = await readDisabledCache();
-      const key = `${input.provider}:${input.name}`;
-      if (disabled[key]) {
-        delete disabled[key];
-        await writeDisabledCache(disabled);
-      }
-
-      return { success: true, message: `Removed "${input.name}" from ${input.provider}` };
-    },
+        return { success: true, message: `Removed "${input.name}" from ${input.provider}` };
+      }),
     catch: (cause) =>
       new McpError({ message: `Failed to remove MCP server: ${input.name}`, cause }),
   });
@@ -453,40 +518,44 @@ function removeServer(input: McpRemoveInput): Effect.Effect<McpRemoveResult, Mcp
 
 function toggleServer(input: McpToggleInput): Effect.Effect<McpToggleResult, McpError> {
   return Effect.tryPromise({
-    try: async () => {
-      const cacheKey = `${input.provider}:${input.name}`;
+    try: () =>
+      withConfigLock(input.provider, async () => {
+        const cacheKey = `${input.provider}:${input.name}`;
 
-      if (!input.enabled) {
-        // Disable: move from native config to disabled cache
-        let config: Record<string, unknown> | undefined;
+        if (!input.enabled) {
+          // Disable: move from native config to disabled cache
+          let config: Record<string, unknown> | undefined;
 
-        if (input.provider === "codex") {
-          const codexConfig = await readCodexConfig();
-          config = codexConfig.mcp_servers?.[input.name];
-          if (config) {
+          if (input.provider === "codex") {
+            const codexConfig = await readCodexConfig();
+            config = codexConfig.mcp_servers?.[input.name];
+            if (!config) {
+              throw new Error(`"${input.name}" not found in Codex config`);
+            }
             delete codexConfig.mcp_servers![input.name];
             await writeCodexConfig(codexConfig);
-          }
-        } else {
-          const copilotConfig = await readCopilotConfig();
-          config = copilotConfig.mcpServers?.[input.name];
-          if (config) {
+          } else {
+            const copilotConfig = await readCopilotConfig();
+            config = copilotConfig.mcpServers?.[input.name];
+            if (!config) {
+              throw new Error(`"${input.name}" not found in Copilot config`);
+            }
             delete copilotConfig.mcpServers![input.name];
             await writeCopilotConfig(copilotConfig);
           }
-        }
 
-        if (config) {
           const disabled = await readDisabledCache();
           disabled[cacheKey] = { provider: input.provider, config };
           await writeDisabledCache(disabled);
-        }
-      } else {
-        // Enable: move from disabled cache back to native config
-        const disabled = await readDisabledCache();
-        const entry = disabled[cacheKey];
+        } else {
+          // Enable: move from disabled cache back to native config
+          const disabled = await readDisabledCache();
+          const entry = disabled[cacheKey];
 
-        if (entry) {
+          if (!entry) {
+            throw new Error(`"${input.name}" not found in disabled cache`);
+          }
+
           if (input.provider === "codex") {
             const codexConfig = await readCodexConfig();
             if (!codexConfig.mcp_servers) codexConfig.mcp_servers = {};
@@ -501,10 +570,9 @@ function toggleServer(input: McpToggleInput): Effect.Effect<McpToggleResult, Mcp
           delete disabled[cacheKey];
           await writeDisabledCache(disabled);
         }
-      }
 
-      return { name: input.name, enabled: input.enabled } satisfies McpToggleResult;
-    },
+        return { name: input.name, enabled: input.enabled } satisfies McpToggleResult;
+      }),
     catch: (cause) =>
       new McpError({ message: `Failed to toggle MCP server: ${input.name}`, cause }),
   });
@@ -516,34 +584,35 @@ function browseCatalog(): Effect.Effect<McpBrowseResult, McpError> {
 
 function updateServer(input: McpUpdateInput): Effect.Effect<McpUpdateResult, McpError> {
   return Effect.tryPromise({
-    try: async () => {
-      if (input.provider === "codex") {
-        const config = await readCodexConfig();
-        const entry = config.mcp_servers?.[input.name];
-        if (!entry) {
-          return { success: false, message: `"${input.name}" not found in Codex config` };
+    try: () =>
+      withConfigLock(input.provider, async () => {
+        if (input.provider === "codex") {
+          const config = await readCodexConfig();
+          const entry = config.mcp_servers?.[input.name];
+          if (!entry) {
+            return { success: false, message: `"${input.name}" not found in Codex config` };
+          }
+          if (input.command !== undefined) entry.command = input.command;
+          if (input.args !== undefined) entry.args = [...input.args];
+          if (input.url !== undefined) entry.url = input.url;
+          if (input.headers !== undefined) entry.headers = { ...input.headers };
+          if (input.bearerToken !== undefined) entry.bearer_token_env_var = input.bearerToken;
+          await writeCodexConfig(config);
+        } else {
+          const config = await readCopilotConfig();
+          const entry = config.mcpServers?.[input.name];
+          if (!entry) {
+            return { success: false, message: `"${input.name}" not found in Copilot config` };
+          }
+          if (input.command !== undefined) entry.command = input.command;
+          if (input.args !== undefined) entry.args = [...input.args];
+          if (input.url !== undefined) entry.url = input.url;
+          if (input.headers !== undefined) entry.headers = { ...input.headers };
+          await writeCopilotConfig(config);
         }
-        if (input.command !== undefined) entry.command = input.command;
-        if (input.args !== undefined) entry.args = [...input.args];
-        if (input.url !== undefined) entry.url = input.url;
-        if (input.headers !== undefined) entry.headers = { ...input.headers };
-        if (input.bearerToken !== undefined) entry.bearer_token_env_var = input.bearerToken;
-        await writeCodexConfig(config);
-      } else {
-        const config = await readCopilotConfig();
-        const entry = config.mcpServers?.[input.name];
-        if (!entry) {
-          return { success: false, message: `"${input.name}" not found in Copilot config` };
-        }
-        if (input.command !== undefined) entry.command = input.command;
-        if (input.args !== undefined) entry.args = [...input.args];
-        if (input.url !== undefined) entry.url = input.url;
-        if (input.headers !== undefined) entry.headers = { ...input.headers };
-        await writeCopilotConfig(config);
-      }
 
-      return { success: true, message: `Updated "${input.name}" in ${input.provider}` };
-    },
+        return { success: true, message: `Updated "${input.name}" in ${input.provider}` };
+      }),
     catch: (cause) =>
       new McpError({ message: `Failed to update MCP server: ${input.name}`, cause }),
   });
