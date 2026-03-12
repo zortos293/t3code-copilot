@@ -597,6 +597,16 @@ function updateServer(input: McpUpdateInput): Effect.Effect<McpUpdateResult, Mcp
           if (input.url !== undefined) entry.url = input.url;
           if (input.headers !== undefined) entry.headers = { ...input.headers };
           if (input.bearerToken !== undefined) entry.bearer_token_env_var = input.bearerToken;
+          // Validate resulting transport state
+          assertValidTransport({
+            command: typeof entry.command === "string" ? entry.command : undefined,
+            url: typeof entry.url === "string" ? entry.url : undefined,
+            bearerToken:
+              typeof entry.bearer_token_env_var === "string"
+                ? entry.bearer_token_env_var
+                : undefined,
+            provider: input.provider,
+          });
           await writeCodexConfig(config);
         } else {
           const config = await readCopilotConfig();
@@ -608,6 +618,12 @@ function updateServer(input: McpUpdateInput): Effect.Effect<McpUpdateResult, Mcp
           if (input.args !== undefined) entry.args = [...input.args];
           if (input.url !== undefined) entry.url = input.url;
           if (input.headers !== undefined) entry.headers = { ...input.headers };
+          // Validate resulting transport state
+          assertValidTransport({
+            command: typeof entry.command === "string" ? entry.command : undefined,
+            url: typeof entry.url === "string" ? entry.url : undefined,
+            provider: input.provider,
+          });
           await writeCopilotConfig(config);
         }
 
