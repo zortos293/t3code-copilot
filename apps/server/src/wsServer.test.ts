@@ -8,6 +8,7 @@ import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effec
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import { SkillsManagerLive } from "./skills/SkillsManager";
+import { McpManagerLive } from "./mcp/McpManager";
 import WebSocket from "ws";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
@@ -534,6 +535,7 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(runtimeLayer),
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(SkillsManagerLive),
+      Layer.provideMerge(McpManagerLive),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),

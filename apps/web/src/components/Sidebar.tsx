@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  PlugIcon,
   PlusIcon,
   PuzzleIcon,
   RocketIcon,
@@ -1341,6 +1342,18 @@ export default function Sidebar() {
             >
               <PuzzleIcon className="size-3.5 shrink-0" />
               <span>Skills</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<button type="button" />}
+              isActive={pathname === "/mcp"}
+              size="sm"
+              className="cursor-pointer gap-2 px-2 py-1.5 font-medium text-muted-foreground text-xs hover:bg-accent hover:text-foreground data-[active=true]:bg-accent data-[active=true]:text-foreground"
+              onClick={() => void navigate({ to: "/mcp" })}
+            >
+              <PlugIcon className="size-3.5 shrink-0" />
+              <span>MCP Servers</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
