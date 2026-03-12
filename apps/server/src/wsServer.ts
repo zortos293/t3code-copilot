@@ -59,6 +59,7 @@ import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuer
 import { clamp } from "effect/Number";
 import { Open, resolveAvailableEditors } from "./open";
 import { SkillsManager } from "./skills/SkillsManager";
+import { McpManager } from "./mcp/McpManager";
 import { ServerConfig } from "./config";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { tryHandleProjectFaviconRequest } from "./projectFaviconRoute";
@@ -219,7 +220,8 @@ export type ServerRuntimeServices =
   | Keybindings
   | Open
   | AnalyticsService
-  | SkillsManager;
+  | SkillsManager
+  | McpManager;
 
 export class ServerLifecycleError extends Schema.TaggedErrorClass<ServerLifecycleError>()(
   "ServerLifecycleError",
@@ -256,6 +258,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
   const skillsManager = yield* SkillsManager;
+  const mcpManager = yield* McpManager;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -896,6 +899,32 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const body = stripRequestTag(request.body);
         return yield* skillsManager.readContent(body);
       }
+
+      case WS_METHODS.mcpList:
+        return yield* mcpManager.list;
+
+      case WS_METHODS.mcpAdd: {
+        const body = stripRequestTag(request.body);
+        return yield* mcpManager.add(body);
+      }
+
+      case WS_METHODS.mcpRemove: {
+        const body = stripRequestTag(request.body);
+        return yield* mcpManager.remove(body);
+      }
+
+      case WS_METHODS.mcpToggle: {
+        const body = stripRequestTag(request.body);
+        return yield* mcpManager.toggle(body);
+      }
+
+      case WS_METHODS.mcpUpdate: {
+        const body = stripRequestTag(request.body);
+        return yield* mcpManager.update(body);
+      }
+
+      case WS_METHODS.mcpBrowse:
+        return yield* mcpManager.browse;
 
       case WS_METHODS.serverGetConfig:
         const keybindingsConfig = yield* keybindingsManager.loadConfigState;
