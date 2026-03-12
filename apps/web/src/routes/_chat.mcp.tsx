@@ -136,7 +136,7 @@ function ServerSettingsEditor({
 }) {
   const isHttpServer = server.type === "http" || (!!server.url && !server.command);
   const [command, setCommand] = useState(server.command ?? "");
-  const [args, setArgs] = useState((server.args ?? []).join(" "));
+  const [argsText, setArgsText] = useState((server.args ?? []).join("\n"));
   const [url, setUrl] = useState(server.url ?? "");
   const [bearerToken, setBearerToken] = useState(server.bearerToken ?? "");
   const [headersText, setHeadersText] = useState(
@@ -167,10 +167,13 @@ function ServerSettingsEditor({
       });
     } else {
       const trimmedCmd = command.trim();
-      const trimmedArgs = args.trim();
+      const parsedArgs = argsText
+        .split("\n")
+        .map((a) => a.trim())
+        .filter(Boolean);
       onSave({
         ...(trimmedCmd ? { command: trimmedCmd } : {}),
-        ...(trimmedArgs ? { args: trimmedArgs.split(/\s+/) } : {}),
+        ...(parsedArgs.length > 0 ? { args: parsedArgs } : {}),
       });
     }
   };
@@ -237,13 +240,14 @@ function ServerSettingsEditor({
           </div>
           <div>
             <label className="mb-1 block text-[10px] font-medium text-muted-foreground/70">
-              Arguments
+              Arguments (one per line)
             </label>
-            <Input
-              value={args}
-              onChange={(e) => setArgs(e.target.value)}
-              placeholder="-y @scope/package --api-key=..."
-              className="h-7 font-mono text-[11px]"
+            <textarea
+              value={argsText}
+              onChange={(e) => setArgsText(e.target.value)}
+              placeholder={"-y\n@scope/package\n--api-key=..."}
+              className="h-16 w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+              rows={3}
             />
           </div>
         </div>
@@ -326,7 +330,7 @@ function McpServerCard({
       headers?: Record<string, string>;
       bearerToken?: string;
     },
-  ) => void;
+  ) => Promise<boolean>;
   isUpdating: boolean;
 }) {
   const [showSettings, setShowSettings] = useState(false);
@@ -388,9 +392,9 @@ function McpServerCard({
       {showSettings && (
         <ServerSettingsEditor
           server={server}
-          onSave={(data) => {
-            onUpdate(server.name, server.provider, data);
-            setShowSettings(false);
+          onSave={async (data) => {
+            const ok = await onUpdate(server.name, server.provider, data);
+            if (ok) setShowSettings(false);
           }}
           isSaving={isUpdating}
           onClose={() => setShowSettings(false)}
@@ -457,6 +461,7 @@ function CatalogCard({
               onClick={() => onInstall(entry, "codex")}
               className="size-6 p-0"
               title="Install for Codex"
+              aria-label="Install for Codex"
             >
               {isInstalling ? (
                 <LoaderIcon className="size-2.5 animate-spin" />
@@ -481,6 +486,7 @@ function CatalogCard({
               onClick={() => onInstall(entry, "copilot")}
               className="size-6 p-0"
               title="Install for GitHub Copilot"
+              aria-label="Install for GitHub Copilot"
             >
               {isInstalling ? (
                 <LoaderIcon className="size-2.5 animate-spin" />
@@ -642,7 +648,7 @@ function AddServerDialog({
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<"codex" | "copilot">("codex");
   const [command, setCommand] = useState("");
-  const [args, setArgs] = useState("");
+  const [args, setArgs] = useState<string[]>([]);
   const [url, setUrl] = useState("");
   const [bearerToken, setBearerToken] = useState("");
   const [headersText, setHeadersText] = useState("");
@@ -652,7 +658,7 @@ function AddServerDialog({
     setName("");
     setProvider("codex");
     setCommand("");
-    setArgs("");
+    setArgs([]);
     setUrl("");
     setBearerToken("");
     setHeadersText("");
@@ -667,11 +673,10 @@ function AddServerDialog({
 
     if (mode === "stdio") {
       const trimmedCmd = command.trim();
-      const trimmedArgs = args.trim();
       onAdd({
         ...base,
         ...(trimmedCmd ? { command: trimmedCmd } : {}),
-        ...(trimmedArgs ? { args: trimmedArgs.split(/\s+/) } : {}),
+        ...(args.length > 0 ? { args } : {}),
       });
     } else {
       const trimmedUrl = url.trim();
@@ -801,13 +806,21 @@ function AddServerDialog({
                 </div>
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-foreground">
-                    Arguments
+                    Arguments (one per line)
                   </label>
-                  <Input
-                    value={args}
-                    onChange={(e) => setArgs(e.target.value)}
-                    placeholder="-y @scope/package --api-key=..."
-                    className="font-mono text-sm"
+                  <textarea
+                    value={args.join("\n")}
+                    onChange={(e) =>
+                      setArgs(
+                        e.target.value
+                          .split("\n")
+                          .map((a) => a.trim())
+                          .filter(Boolean),
+                      )
+                    }
+                    placeholder={"-y\n@scope/package\n--api-key=..."}
+                    className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+                    rows={3}
                   />
                 </div>
               </div>
@@ -974,26 +987,30 @@ function McpRouteView() {
       headers?: Record<string, string>;
       bearerToken?: string;
     },
-  ) => {
-    updateMutation.mutate(
-      { name, provider, ...data },
-      {
-        onSuccess: (result) => {
-          toastManager.add({
-            type: result.success ? "success" : "error",
-            title: result.success ? "Settings saved" : "Update failed",
-            description: result.message,
-          });
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      updateMutation.mutate(
+        { name, provider, ...data },
+        {
+          onSuccess: (result) => {
+            toastManager.add({
+              type: result.success ? "success" : "error",
+              title: result.success ? "Settings saved" : "Update failed",
+              description: result.message,
+            });
+            resolve(result.success);
+          },
+          onError: (error) => {
+            toastManager.add({
+              type: "error",
+              title: "Update failed",
+              description: mutationErrorMessage(error),
+            });
+            resolve(false);
+          },
         },
-        onError: (error) => {
-          toastManager.add({
-            type: "error",
-            title: "Update failed",
-            description: mutationErrorMessage(error),
-          });
-        },
-      },
-    );
+      );
+    });
   };
 
   const handleAddFromCatalog = (entry: McpCatalogEntry, provider: "codex" | "copilot") => {
@@ -1229,6 +1246,18 @@ function McpRouteView() {
                       className="h-[76px] animate-pulse rounded-xl border border-border bg-card"
                     />
                   ))}
+                </div>
+              ) : browseQuery.isError ? (
+                <div className="rounded-xl border border-border bg-card p-6 text-center">
+                  <p className="text-sm text-destructive">Failed to load MCP catalog.</p>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="mt-3"
+                    onClick={() => void browseQuery.refetch()}
+                  >
+                    Retry
+                  </Button>
                 </div>
               ) : filteredCatalog.length > 0 ? (
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
