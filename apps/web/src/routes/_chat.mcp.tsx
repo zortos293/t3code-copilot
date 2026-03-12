@@ -17,6 +17,7 @@ import {
 
 import type { McpCatalogEntry, McpServerConfig } from "@t3tools/contracts";
 import { isElectron } from "../env";
+import { GitHubIcon, OpenAI } from "../components/Icons";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -81,11 +82,14 @@ function ProviderBadge({ provider }: { provider: "codex" | "copilot" }) {
     provider === "codex"
       ? "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20"
       : "bg-blue-500/10 text-blue-400 ring-blue-500/20";
+  const Icon = provider === "codex" ? OpenAI : GitHubIcon;
+  const tooltip = provider === "codex" ? "Codex" : "GitHub Copilot";
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${styles}`}
+      title={tooltip}
+      className={`inline-flex items-center rounded-full p-1 ring-1 ring-inset ${styles}`}
     >
-      {provider === "codex" ? "Codex" : "Copilot"}
+      <Icon className="size-3" />
     </span>
   );
 }
@@ -438,8 +442,12 @@ function CatalogCard({
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {codexInstalled ? (
-            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-              Codex ✓
+            <span
+              title="Codex"
+              className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+            >
+              <OpenAI className="size-3" />
+              <CheckIcon className="size-2.5" />
             </span>
           ) : (
             <Button
@@ -448,18 +456,22 @@ function CatalogCard({
               disabled={isInstalling}
               onClick={() => onInstall(entry, "codex")}
               className="h-6 gap-1 px-2 text-[10px]"
+              title="Install for Codex"
             >
               {isInstalling ? (
                 <LoaderIcon className="size-2.5 animate-spin" />
               ) : (
-                <PlusIcon className="size-2.5" />
+                <OpenAI className="size-3" />
               )}
-              Codex
             </Button>
           )}
           {copilotInstalled ? (
-            <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-400">
-              Copilot ✓
+            <span
+              title="GitHub Copilot"
+              className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-blue-400"
+            >
+              <GitHubIcon className="size-3" />
+              <CheckIcon className="size-2.5" />
             </span>
           ) : (
             <Button
@@ -468,13 +480,13 @@ function CatalogCard({
               disabled={isInstalling}
               onClick={() => onInstall(entry, "copilot")}
               className="h-6 gap-1 px-2 text-[10px]"
+              title="Install for GitHub Copilot"
             >
               {isInstalling ? (
                 <LoaderIcon className="size-2.5 animate-spin" />
               ) : (
-                <PlusIcon className="size-2.5" />
+                <GitHubIcon className="size-3" />
               )}
-              Copilot
             </Button>
           )}
         </div>
@@ -546,7 +558,18 @@ function InstallPromptDialog({
           <DialogTitle>Install {entry ? formatDisplayName(entry.name) : ""}</DialogTitle>
           <DialogDescription>
             Configure required settings for{" "}
-            <span className="font-medium">{provider === "codex" ? "Codex" : "Copilot"}</span>.
+            <span className="inline-flex items-center gap-1 align-middle font-medium">
+              {provider === "codex" ? (
+                <>
+                  <OpenAI className="size-3.5" /> Codex
+                </>
+              ) : (
+                <>
+                  <GitHubIcon className="size-3.5" /> GitHub Copilot
+                </>
+              )}
+            </span>
+            .
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -707,23 +730,27 @@ function AddServerDialog({
                 <button
                   type="button"
                   onClick={() => setProvider("codex")}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                     provider === "codex"
                       ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400"
                       : "border-border text-muted-foreground hover:bg-accent"
                   }`}
+                  title="Codex"
                 >
+                  <OpenAI className="size-4" />
                   Codex
                 </button>
                 <button
                   type="button"
                   onClick={() => setProvider("copilot")}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                     provider === "copilot"
                       ? "border-blue-500/40 bg-blue-500/10 text-blue-400"
                       : "border-border text-muted-foreground hover:bg-accent"
                   }`}
+                  title="GitHub Copilot"
                 >
+                  <GitHubIcon className="size-4" />
                   Copilot
                 </button>
               </div>
