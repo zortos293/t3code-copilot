@@ -8,15 +8,20 @@ const CURRENT_DIR = "/repo/apps/server/src/provider/Layers";
 const SDK_ENTRYPOINT = "/repo/apps/server/node_modules/@github/copilot-sdk/dist/index.js";
 
 describe("copilotCliPath", () => {
-  it("prefers the SDK JavaScript entrypoint on Windows", () => {
-    const jsEntrypoint = join("/repo/apps/server/node_modules", "@github", "copilot", "index.js");
+  it("prefers the native binary on Windows", () => {
+    const npmLoaderPath = join(
+      "/repo/apps/server/node_modules",
+      "@github",
+      "copilot",
+      "npm-loader.js",
+    );
     const binaryPath = join(
       "/repo/apps/server/node_modules",
       "@github",
       "copilot-win32-x64",
       "copilot.exe",
     );
-    const existingPaths = new Set([jsEntrypoint, binaryPath]);
+    const existingPaths = new Set([npmLoaderPath, binaryPath]);
 
     expect(
       resolveBundledCopilotCliPathFrom({
@@ -26,18 +31,23 @@ describe("copilotCliPath", () => {
         arch: "x64",
         exists: (candidate) => existingPaths.has(candidate),
       }),
-    ).toBe(jsEntrypoint);
+    ).toBe(binaryPath);
   });
 
   it("keeps the native binary preference on non-Windows platforms", () => {
-    const jsEntrypoint = join("/repo/apps/server/node_modules", "@github", "copilot", "index.js");
+    const npmLoaderPath = join(
+      "/repo/apps/server/node_modules",
+      "@github",
+      "copilot",
+      "npm-loader.js",
+    );
     const binaryPath = join(
       "/repo/apps/server/node_modules",
       "@github",
       "copilot-linux-x64",
       "copilot",
     );
-    const existingPaths = new Set([jsEntrypoint, binaryPath]);
+    const existingPaths = new Set([npmLoaderPath, binaryPath]);
 
     expect(
       resolveBundledCopilotCliPathFrom({
@@ -50,7 +60,7 @@ describe("copilotCliPath", () => {
     ).toBe(binaryPath);
   });
 
-  it("does not fall back to npm-loader.js for SDK launches", () => {
+  it("falls back to npm-loader.js when no native binary is present on Windows", () => {
     const npmLoaderPath = join(
       "/repo/apps/server/node_modules",
       "@github",
@@ -67,6 +77,26 @@ describe("copilotCliPath", () => {
         arch: "x64",
         exists: (candidate) => existingPaths.has(candidate),
       }),
-    ).toBeUndefined();
+    ).toBe(npmLoaderPath);
+  });
+
+  it("falls back to npm-loader.js when no native binary is present on non-Windows platforms", () => {
+    const npmLoaderPath = join(
+      "/repo/apps/server/node_modules",
+      "@github",
+      "copilot",
+      "npm-loader.js",
+    );
+    const existingPaths = new Set([npmLoaderPath]);
+
+    expect(
+      resolveBundledCopilotCliPathFrom({
+        currentDir: CURRENT_DIR,
+        sdkEntrypoint: SDK_ENTRYPOINT,
+        platform: "darwin",
+        arch: "arm64",
+        exists: (candidate) => existingPaths.has(candidate),
+      }),
+    ).toBe(npmLoaderPath);
   });
 });

@@ -637,6 +637,25 @@ describe("WebSocket Server", () => {
     expect(bytes).toEqual(Buffer.from("hello-encoded-attachment"));
   });
 
+  it("serves persisted attachments by attachment id lookup", async () => {
+    const stateDir = makeTempDir("t3code-state-attachments-id-");
+    const attachmentId = "thread-a-00000000-0000-4000-8000-000000000001";
+    const attachmentPath = path.join(stateDir, "attachments", `${attachmentId}.png`);
+    fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+    fs.writeFileSync(attachmentPath, Buffer.from("hello-id-attachment"));
+
+    server = await createTestServer({ cwd: "/test/project", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await fetch(`http://127.0.0.1:${port}/attachments/${attachmentId}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/png");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    expect(bytes).toEqual(Buffer.from("hello-id-attachment"));
+  });
+
   it("serves static index for root path", async () => {
     const stateDir = makeTempDir("t3code-state-static-root-");
     const staticDir = makeTempDir("t3code-static-root-");

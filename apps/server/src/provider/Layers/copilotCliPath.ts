@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 const GITHUB_SCOPE_DIR = "@github";
 const COPILOT_PATHLESS_COMMAND_PATTERN = /^copilot(?:\.(?:exe|cmd|bat))?$/i;
-const COPILOT_SDK_ENTRYPOINT = "index.js";
+const COPILOT_NPM_LOADER = "npm-loader.js";
 
 function dedupePaths(paths: ReadonlyArray<string | undefined>): string[] {
   const resolved: string[] = [];
@@ -131,15 +131,10 @@ export function resolveBundledCopilotCliPathFrom(input: {
   const binaryCandidates = nodeModulesRoots.flatMap((root) =>
     platformPackages.map((packageName) => join(root, GITHUB_SCOPE_DIR, packageName, binaryName)),
   );
-  const jsEntrypointCandidates = nodeModulesRoots.map((root) =>
-    join(root, GITHUB_SCOPE_DIR, "copilot", COPILOT_SDK_ENTRYPOINT),
+  const npmLoaderCandidates = nodeModulesRoots.map((root) =>
+    join(root, GITHUB_SCOPE_DIR, "copilot", COPILOT_NPM_LOADER),
   );
-  const preferredCandidates =
-    platform === "win32"
-      ? dedupePaths([...jsEntrypointCandidates, ...binaryCandidates])
-      : dedupePaths([...binaryCandidates, ...jsEntrypointCandidates]);
-
-  for (const candidate of preferredCandidates) {
+  for (const candidate of dedupePaths([...binaryCandidates, ...npmLoaderCandidates])) {
     if (exists(candidate)) {
       return candidate;
     }
@@ -153,13 +148,8 @@ export function resolveBundledCopilotCliPathFrom(input: {
   const sdkSiblingBinaryCandidates = platformPackages.map((packageName) =>
     join(githubScopeDir, packageName, binaryName),
   );
-  const sdkSiblingJsEntrypoint = join(githubScopeDir, "copilot", COPILOT_SDK_ENTRYPOINT);
-  const preferredSdkSiblingCandidates =
-    platform === "win32"
-      ? dedupePaths([sdkSiblingJsEntrypoint, ...sdkSiblingBinaryCandidates])
-      : dedupePaths([...sdkSiblingBinaryCandidates, sdkSiblingJsEntrypoint]);
-
-  for (const candidate of preferredSdkSiblingCandidates) {
+  const sdkSiblingLoaderPath = join(githubScopeDir, "copilot", COPILOT_NPM_LOADER);
+  for (const candidate of dedupePaths([...sdkSiblingBinaryCandidates, sdkSiblingLoaderPath])) {
     if (exists(candidate)) {
       return candidate;
     }
