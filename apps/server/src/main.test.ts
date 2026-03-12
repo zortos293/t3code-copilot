@@ -14,6 +14,7 @@ import { CliConfig, recordStartupHeartbeat, t3Cli, type CliConfigShape } from ".
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { SkillsManager, type SkillsManagerShape } from "./skills/SkillsManager";
+import { McpManager, type McpManagerShape } from "./mcp/McpManager";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./wsServer";
@@ -60,6 +61,14 @@ const testLayer = Layer.mergeAll(
     uninstall: () => Effect.succeed({ success: true, message: "" }),
     readContent: () => Effect.succeed({ skillName: "", content: "" }),
   } satisfies SkillsManagerShape),
+  Layer.succeed(McpManager, {
+    list: Effect.succeed({ servers: [] }),
+    add: () => Effect.succeed({ success: true, message: "" }),
+    remove: () => Effect.succeed({ success: true, message: "" }),
+    toggle: () => Effect.succeed({ name: "", enabled: false }),
+    update: () => Effect.succeed({ success: true, message: "" }),
+    browse: Effect.succeed({ servers: [] }),
+  } satisfies McpManagerShape),
   AnalyticsService.layerTest,
   FetchHttpClient.layer,
   NodeServices.layer,

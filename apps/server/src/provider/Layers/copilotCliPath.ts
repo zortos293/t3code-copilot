@@ -7,6 +7,7 @@ const require = createRequire(import.meta.url);
 const CURRENT_DIR = dirname(fileURLToPath(import.meta.url));
 const GITHUB_SCOPE_DIR = "@github";
 const COPILOT_PATHLESS_COMMAND_PATTERN = /^copilot(?:\.(?:exe|cmd|bat))?$/i;
+const COPILOT_SDK_ENTRYPOINT = "index.js";
 
 function dedupePaths(paths: ReadonlyArray<string | undefined>): string[] {
   const resolved: string[] = [];
@@ -130,16 +131,15 @@ export function resolveBundledCopilotCliPathFrom(input: {
   const binaryCandidates = nodeModulesRoots.flatMap((root) =>
     platformPackages.map((packageName) => join(root, GITHUB_SCOPE_DIR, packageName, binaryName)),
   );
-  for (const candidate of dedupePaths(binaryCandidates)) {
-    if (exists(candidate)) {
-      return candidate;
-    }
-  }
-
-  const npmLoaderCandidates = dedupePaths(
-    nodeModulesRoots.map((root) => join(root, GITHUB_SCOPE_DIR, "copilot", "npm-loader.js")),
+  const jsEntrypointCandidates = nodeModulesRoots.map((root) =>
+    join(root, GITHUB_SCOPE_DIR, "copilot", COPILOT_SDK_ENTRYPOINT),
   );
-  for (const candidate of npmLoaderCandidates) {
+  const preferredCandidates =
+    platform === "win32"
+      ? dedupePaths([...jsEntrypointCandidates, ...binaryCandidates])
+      : dedupePaths([...binaryCandidates, ...jsEntrypointCandidates]);
+
+  for (const candidate of preferredCandidates) {
     if (exists(candidate)) {
       return candidate;
     }
@@ -153,14 +153,18 @@ export function resolveBundledCopilotCliPathFrom(input: {
   const sdkSiblingBinaryCandidates = platformPackages.map((packageName) =>
     join(githubScopeDir, packageName, binaryName),
   );
-  for (const candidate of dedupePaths(sdkSiblingBinaryCandidates)) {
+  const sdkSiblingJsEntrypoint = join(githubScopeDir, "copilot", COPILOT_SDK_ENTRYPOINT);
+  const preferredSdkSiblingCandidates =
+    platform === "win32"
+      ? dedupePaths([sdkSiblingJsEntrypoint, ...sdkSiblingBinaryCandidates])
+      : dedupePaths([...sdkSiblingBinaryCandidates, sdkSiblingJsEntrypoint]);
+
+  for (const candidate of preferredSdkSiblingCandidates) {
     if (exists(candidate)) {
       return candidate;
     }
   }
-
-  const sdkSiblingLoaderPath = join(githubScopeDir, "copilot", "npm-loader.js");
-  return exists(sdkSiblingLoaderPath) ? sdkSiblingLoaderPath : undefined;
+  return undefined;
 }
 
 export function resolveBundledCopilotCliPath(): string | undefined {

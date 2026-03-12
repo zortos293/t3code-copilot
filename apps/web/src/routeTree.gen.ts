@@ -13,6 +13,7 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ChatSkillsRouteImport } from './routes/_chat.skills'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
+import { Route as ChatMcpRouteImport } from './routes/_chat.mcp'
 import { Route as ChatThreadIdRouteImport } from './routes/_chat.$threadId'
 
 const ChatRoute = ChatRouteImport.update({
@@ -34,6 +35,11 @@ const ChatSettingsRoute = ChatSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatMcpRoute = ChatMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatThreadIdRoute = ChatThreadIdRouteImport.update({
   id: '/$threadId',
   path: '/$threadId',
@@ -43,11 +49,13 @@ const ChatThreadIdRoute = ChatThreadIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/$threadId': typeof ChatThreadIdRoute
+  '/mcp': typeof ChatMcpRoute
   '/settings': typeof ChatSettingsRoute
   '/skills': typeof ChatSkillsRoute
 }
 export interface FileRoutesByTo {
   '/$threadId': typeof ChatThreadIdRoute
+  '/mcp': typeof ChatMcpRoute
   '/settings': typeof ChatSettingsRoute
   '/skills': typeof ChatSkillsRoute
   '/': typeof ChatIndexRoute
@@ -56,19 +64,21 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_chat': typeof ChatRouteWithChildren
   '/_chat/$threadId': typeof ChatThreadIdRoute
+  '/_chat/mcp': typeof ChatMcpRoute
   '/_chat/settings': typeof ChatSettingsRoute
   '/_chat/skills': typeof ChatSkillsRoute
   '/_chat/': typeof ChatIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$threadId' | '/settings' | '/skills'
+  fullPaths: '/' | '/$threadId' | '/mcp' | '/settings' | '/skills'
   fileRoutesByTo: FileRoutesByTo
-  to: '/$threadId' | '/settings' | '/skills' | '/'
+  to: '/$threadId' | '/mcp' | '/settings' | '/skills' | '/'
   id:
     | '__root__'
     | '/_chat'
     | '/_chat/$threadId'
+    | '/_chat/mcp'
     | '/_chat/settings'
     | '/_chat/skills'
     | '/_chat/'
@@ -108,6 +118,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/mcp': {
+      id: '/_chat/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof ChatMcpRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/$threadId': {
       id: '/_chat/$threadId'
       path: '/$threadId'
@@ -120,6 +137,7 @@ declare module '@tanstack/react-router' {
 
 interface ChatRouteChildren {
   ChatThreadIdRoute: typeof ChatThreadIdRoute
+  ChatMcpRoute: typeof ChatMcpRoute
   ChatSettingsRoute: typeof ChatSettingsRoute
   ChatSkillsRoute: typeof ChatSkillsRoute
   ChatIndexRoute: typeof ChatIndexRoute
@@ -127,6 +145,7 @@ interface ChatRouteChildren {
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatThreadIdRoute: ChatThreadIdRoute,
+  ChatMcpRoute: ChatMcpRoute,
   ChatSettingsRoute: ChatSettingsRoute,
   ChatSkillsRoute: ChatSkillsRoute,
   ChatIndexRoute: ChatIndexRoute,

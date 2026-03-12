@@ -32,6 +32,10 @@ const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
 const COPILOT_PROVIDER = "copilot" as const;
 
+export function getCopilotHealthCheckTimeoutMs(platform: string = process.platform): number {
+  return platform === "win32" ? 10_000 : DEFAULT_TIMEOUT_MS;
+}
+
 // ── Pure helpers ────────────────────────────────────────────────────
 
 export interface CommandResult {
@@ -498,7 +502,7 @@ export const checkCopilotProviderStatus: Effect.Effect<ServerProviderStatus> = E
           _tag: "CopilotHealthProbeError",
           cause,
         }) satisfies CopilotHealthProbeError,
-    }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+    }).pipe(Effect.timeoutOption(getCopilotHealthCheckTimeoutMs()), Effect.result);
 
     if (Result.isFailure(probe)) {
       const error = probe.failure.cause;

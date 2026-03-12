@@ -6,6 +6,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   checkCodexProviderStatus,
+  getCopilotHealthCheckTimeoutMs,
   hasCustomModelProvider,
   parseAuthStatusFromOutput,
   readCodexConfigModelProvider,
@@ -463,5 +464,13 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(yield* hasCustomModelProvider, true);
       }),
     );
+  });
+
+  describe("getCopilotHealthCheckTimeoutMs", () => {
+    it("uses a longer startup timeout on Windows", () => {
+      assert.strictEqual(getCopilotHealthCheckTimeoutMs("darwin"), 4_000);
+      assert.strictEqual(getCopilotHealthCheckTimeoutMs("linux"), 4_000);
+      assert.strictEqual(getCopilotHealthCheckTimeoutMs("win32"), 10_000);
+    });
   });
 });
