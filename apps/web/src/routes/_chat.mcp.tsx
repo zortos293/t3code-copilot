@@ -87,7 +87,7 @@ function ProviderBadge({ provider }: { provider: "codex" | "copilot" }) {
   return (
     <span
       title={tooltip}
-      className={`inline-flex items-center rounded-full p-1 ring-1 ring-inset ${styles}`}
+      className={`inline-flex items-center rounded-full p-0.5 ring-1 ring-inset ${styles}`}
     >
       <Icon className="size-3" />
     </span>
@@ -444,10 +444,10 @@ function CatalogCard({
           {codexInstalled ? (
             <span
               title="Codex"
-              className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-400"
+              className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 p-1 text-emerald-400 ring-1 ring-inset ring-emerald-500/20"
             >
               <OpenAI className="size-3" />
-              <CheckIcon className="size-2.5" />
+              <CheckIcon className="size-2" />
             </span>
           ) : (
             <Button
@@ -455,23 +455,23 @@ function CatalogCard({
               variant="outline"
               disabled={isInstalling}
               onClick={() => onInstall(entry, "codex")}
-              className="h-6 gap-1 px-2 text-[10px]"
+              className="size-6 p-0"
               title="Install for Codex"
             >
               {isInstalling ? (
                 <LoaderIcon className="size-2.5 animate-spin" />
               ) : (
-                <OpenAI className="size-3" />
+                <OpenAI className="size-3 opacity-50" />
               )}
             </Button>
           )}
           {copilotInstalled ? (
             <span
               title="GitHub Copilot"
-              className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-blue-400"
+              className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/10 p-1 text-blue-400 ring-1 ring-inset ring-blue-500/20"
             >
               <GitHubIcon className="size-3" />
-              <CheckIcon className="size-2.5" />
+              <CheckIcon className="size-2" />
             </span>
           ) : (
             <Button
@@ -479,13 +479,13 @@ function CatalogCard({
               variant="outline"
               disabled={isInstalling}
               onClick={() => onInstall(entry, "copilot")}
-              className="h-6 gap-1 px-2 text-[10px]"
+              className="size-6 p-0"
               title="Install for GitHub Copilot"
             >
               {isInstalling ? (
                 <LoaderIcon className="size-2.5 animate-spin" />
               ) : (
-                <GitHubIcon className="size-3" />
+                <GitHubIcon className="size-3 opacity-50" />
               )}
             </Button>
           )}
