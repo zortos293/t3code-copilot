@@ -1064,6 +1064,17 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   );
 });
 
+const extendReplacementRangeForTrailingSpace = (
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number => {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+};
+
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -3980,17 +3991,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
     };
   }, [composerCursor]);
-
-  const extendReplacementRangeForTrailingSpace = (
-    text: string,
-    rangeEnd: number,
-    replacement: string,
-  ): number => {
-    if (!replacement.endsWith(" ")) {
-      return rangeEnd;
-    }
-    return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
-  };
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
