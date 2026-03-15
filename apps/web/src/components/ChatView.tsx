@@ -247,6 +247,8 @@ import { formatTimestamp } from "../timestampFormat";
 import {
   computeMessageDurationStart,
   normalizeCompactToolLabel,
+  resolveWorkEntryIconKind,
+  type WorkEntryIconKind,
 } from "./chat/MessagesTimeline.logic";
 import {
   deriveVisibleThreadWorkLogEntries,
@@ -373,70 +375,46 @@ function workEntryPreview(workEntry: {
 }
 
 function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
-  if (workEntry.requestKind === "command") return TerminalIcon;
-  if (workEntry.requestKind === "file-read") return EyeIcon;
-  if (workEntry.requestKind === "file-change") return SquarePenIcon;
-
-  if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return TerminalIcon;
+  const iconKind = resolveWorkEntryIconKind(workEntry);
+  if (!iconKind) {
+    return workToneIcon(workEntry.tone).icon;
   }
-  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
-    return SquarePenIcon;
-  }
-  if (workEntry.itemType === "web_search") return GlobeIcon;
-  if (workEntry.itemType === "image_view") return EyeIcon;
+  return iconKindToLucideIcon(iconKind);
+}
 
-  switch (workEntry.itemType) {
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
+function iconKindToLucideIcon(iconKind: WorkEntryIconKind): LucideIcon {
+  switch (iconKind) {
+    case "bot":
+      return BotIcon;
+    case "check":
+      return CheckIcon;
+    case "database":
+      return DatabaseIcon;
+    case "eye":
+      return EyeIcon;
+    case "file":
+      return FileIcon;
+    case "folder":
+      return FolderIcon;
+    case "globe":
+      return GlobeIcon;
+    case "hammer":
       return HammerIcon;
+    case "list-todo":
+      return ListTodoIcon;
+    case "search":
+      return SearchIcon;
+    case "square-pen":
+      return SquarePenIcon;
+    case "target":
+      return TargetIcon;
+    case "terminal":
+      return TerminalIcon;
+    case "wrench":
+      return WrenchIcon;
+    case "zap":
+      return ZapIcon;
   }
-
-  const haystack = [
-    workEntry.label,
-    workEntry.toolTitle,
-    workEntry.detail,
-    workEntry.output,
-    workEntry.command,
-  ]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .join(" ")
-    .toLowerCase();
-
-  if (haystack.includes("report_intent") || haystack.includes("intent logged")) {
-    return TargetIcon;
-  }
-  if (
-    haystack.includes("bash") ||
-    haystack.includes("read_bash") ||
-    haystack.includes("write_bash") ||
-    haystack.includes("stop_bash") ||
-    haystack.includes("list_bash")
-  ) {
-    return TerminalIcon;
-  }
-  if (haystack.includes("sql")) return DatabaseIcon;
-  if (haystack.includes("view")) return EyeIcon;
-  if (haystack.includes("apply_patch")) return SquarePenIcon;
-  if (haystack.includes("rg") || haystack.includes("glob") || haystack.includes("search")) {
-    return SearchIcon;
-  }
-  if (haystack.includes("skill")) return ZapIcon;
-  if (haystack.includes("ask_user") || haystack.includes("approval")) return BotIcon;
-  if (haystack.includes("store_memory")) return FolderIcon;
-  if (haystack.includes("edit") || haystack.includes("patch")) return WrenchIcon;
-  if (haystack.includes("file")) return FileIcon;
-
-  if (haystack.includes("task")) return HammerIcon;
-
-  if (workEntry.activityKind === "turn.plan.updated") return ListTodoIcon;
-  if (workEntry.activityKind === "task.progress") return HammerIcon;
-  if (workEntry.activityKind === "approval.requested") return BotIcon;
-  if (workEntry.activityKind === "approval.resolved") return CheckIcon;
-
-  return workToneIcon(workEntry.tone).icon;
 }
 
 function capitalizePhrase(value: string): string {

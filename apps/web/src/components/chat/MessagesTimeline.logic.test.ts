@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+  resolveWorkEntryIconKind,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +145,45 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("resolveWorkEntryIconKind", () => {
+  it("prefers search heuristics before generic dynamic tool call fallbacks", () => {
+    expect(
+      resolveWorkEntryIconKind({
+        label: "Context7-resolve-library-id",
+        detail: "Available Libraries: Next.js",
+        itemType: "dynamic_tool_call",
+      }),
+    ).toBe("search");
+  });
+
+  it("keeps sql tools on a database icon", () => {
+    expect(
+      resolveWorkEntryIconKind({
+        label: "Sql",
+        detail: "1 row(s) returned",
+        itemType: "dynamic_tool_call",
+      }),
+    ).toBe("database");
+  });
+
+  it("falls back to hammer for generic dynamic tool calls", () => {
+    expect(
+      resolveWorkEntryIconKind({
+        label: "Tool call",
+        itemType: "dynamic_tool_call",
+      }),
+    ).toBe("hammer");
+  });
+
+  it("keeps mcp tool calls on a wrench when no stronger heuristic matches", () => {
+    expect(
+      resolveWorkEntryIconKind({
+        label: "Tool call",
+        itemType: "mcp_tool_call",
+      }),
+    ).toBe("wrench");
   });
 });

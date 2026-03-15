@@ -14,11 +14,17 @@ import {
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
+  DatabaseIcon,
   EyeIcon,
+  FileIcon,
+  FolderIcon,
   GlobeIcon,
   HammerIcon,
   type LucideIcon,
+  ListTodoIcon,
+  SearchIcon,
   SquarePenIcon,
+  TargetIcon,
   TerminalIcon,
   Undo2Icon,
   WrenchIcon,
@@ -32,7 +38,12 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+  resolveWorkEntryIconKind,
+  type WorkEntryIconKind,
+} from "./MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
@@ -685,28 +696,46 @@ function workEntryPreview(
 }
 
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
-  if (workEntry.requestKind === "command") return TerminalIcon;
-  if (workEntry.requestKind === "file-read") return EyeIcon;
-  if (workEntry.requestKind === "file-change") return SquarePenIcon;
-
-  if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return TerminalIcon;
+  const iconKind = resolveWorkEntryIconKind(workEntry);
+  if (!iconKind) {
+    return workToneIcon(workEntry.tone).icon;
   }
-  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
-    return SquarePenIcon;
-  }
-  if (workEntry.itemType === "web_search") return GlobeIcon;
-  if (workEntry.itemType === "image_view") return EyeIcon;
+  return iconKindToLucideIcon(iconKind);
+}
 
-  switch (workEntry.itemType) {
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
+function iconKindToLucideIcon(iconKind: WorkEntryIconKind): LucideIcon {
+  switch (iconKind) {
+    case "bot":
+      return BotIcon;
+    case "check":
+      return CheckIcon;
+    case "database":
+      return DatabaseIcon;
+    case "eye":
+      return EyeIcon;
+    case "file":
+      return FileIcon;
+    case "folder":
+      return FolderIcon;
+    case "globe":
+      return GlobeIcon;
+    case "hammer":
       return HammerIcon;
+    case "list-todo":
+      return ListTodoIcon;
+    case "search":
+      return SearchIcon;
+    case "square-pen":
+      return SquarePenIcon;
+    case "target":
+      return TargetIcon;
+    case "terminal":
+      return TerminalIcon;
+    case "wrench":
+      return WrenchIcon;
+    case "zap":
+      return ZapIcon;
   }
-
-  return workToneIcon(workEntry.tone).icon;
 }
 
 function capitalizePhrase(value: string): string {
