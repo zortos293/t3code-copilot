@@ -31,6 +31,7 @@ const CODEX_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
 const COPILOT_MODEL = DEFAULT_MODEL_BY_PROVIDER.copilot;
 const COPILOT_TIMEOUT_MS = 180_000;
+const COPILOT_TIMEOUT_CANCELLATION_GRACE_MS = 5_000;
 
 function toCodexOutputJsonSchema(schema: Schema.Top): unknown {
   const document = Schema.toJsonSchemaDocument(schema);
@@ -171,19 +172,41 @@ function denyCopilotPermissionRequest(_request: PermissionRequest): PermissionRe
 function withPromiseTimeout<T>(
   operation: () => Promise<T>,
   timeoutMs: number,
+  cancelOnTimeout: () => Promise<void> | void,
   onTimeout: () => Error,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const timeout = setTimeout(() => {
-      reject(onTimeout());
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      void Promise.race([
+        Promise.resolve(cancelOnTimeout()).catch(() => undefined),
+        new Promise<void>((resolveCancellation) => {
+          setTimeout(resolveCancellation, COPILOT_TIMEOUT_CANCELLATION_GRACE_MS);
+        }),
+      ]).finally(() => {
+        reject(onTimeout());
+      });
     }, timeoutMs);
 
     void operation().then(
       (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         clearTimeout(timeout);
         resolve(value);
       },
       (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         clearTimeout(timeout);
         reject(error);
       },
@@ -507,13 +530,28 @@ const makeCodexTextGeneration = Effect.gen(function* () {
                 onPermissionRequest: denyCopilotPermissionRequest,
               });
 
-              const response = await session.sendAndWait(
-                {
-                  prompt,
-                  mode: "immediate",
-                },
-                COPILOT_TIMEOUT_MS,
-              );
+              const response = await (async () => {
+                try {
+                  return await session.sendAndWait(
+                    {
+                      prompt,
+                      mode: "immediate",
+                    },
+                    COPILOT_TIMEOUT_MS,
+                  );
+                } catch (error) {
+                  const history = await session.getMessages().catch(() => [] as SessionEvent[]);
+                  const assistantText = extractLastCopilotAssistantText(history);
+                  if (assistantText.length > 0) {
+                    return {
+                      data: {
+                        content: assistantText,
+                      },
+                    };
+                  }
+                  throw error;
+                }
+              })();
               const history = await session.getMessages().catch(() => [] as SessionEvent[]);
               const assistantText =
                 response?.data.content?.trim() || extractLastCopilotAssistantText(history);
@@ -523,6 +561,16 @@ const makeCodexTextGeneration = Effect.gen(function* () {
               return assistantText;
             },
             COPILOT_TIMEOUT_MS,
+            () =>
+              Promise.race([
+                Promise.allSettled([
+                  session ? session.abort().catch(() => undefined) : Promise.resolve(undefined),
+                  client.forceStop().catch(() => undefined),
+                ]).then(() => undefined),
+                new Promise<void>((resolveCancellation) => {
+                  setTimeout(resolveCancellation, COPILOT_TIMEOUT_CANCELLATION_GRACE_MS);
+                }),
+              ]).then(() => undefined),
             () => new Error("GitHub Copilot request timed out."),
           );
         } finally {
