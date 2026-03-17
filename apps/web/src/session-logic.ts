@@ -48,6 +48,15 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
 }
 
+interface SubagentWorkMetadata {
+  name?: string;
+  description?: string;
+  status?: string;
+  senderThreadId?: string;
+  receiverThreadId?: string;
+  newThreadId?: string;
+}
+
 export interface PendingApproval {
   requestId: ApprovalRequestId;
   requestKind: "command" | "file-read" | "file-change";
@@ -440,6 +449,8 @@ export function deriveWorkLogEntries(
         activityKind: activity.kind,
       };
       const itemType = extractWorkLogItemType(payload);
+      const subagent =
+        itemType === "collab_agent_tool_call" ? extractSubagentMetadata(payload) : undefined;
       const requestKind = extractWorkLogRequestKind(payload);
       if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
         const detail = stripTrailingExitCode(payload.detail).output;
@@ -461,6 +472,20 @@ export function deriveWorkLogEntries(
       }
       if (title) {
         entry.toolTitle = title;
+      }
+      if (subagent) {
+        entry.toolTitle =
+          entry.toolTitle && !/^collab agent/i.test(entry.toolTitle)
+            ? entry.toolTitle
+            : subagent.name
+              ? `Delegated to ${subagent.name}`
+              : "Subagent task";
+        if (!entry.detail) {
+          const subagentDetail = subagent.description ?? formatSubagentThreadDetail(subagent);
+          if (subagentDetail) {
+            entry.detail = subagentDetail;
+          }
+        }
       }
       if (status) {
         entry.toolStatus = status;
@@ -537,6 +562,43 @@ function extractToolStatus(
 
 function asInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
+}
+
+function extractSubagentMetadata(
+  payload: Record<string, unknown> | null,
+): SubagentWorkMetadata | undefined {
+  const data = asRecord(payload?.data);
+  const subagent = asRecord(data?.subagent);
+  if (!subagent) {
+    return undefined;
+  }
+
+  const metadata = {
+    ...(asTrimmedString(subagent.name) ? { name: asTrimmedString(subagent.name)! } : {}),
+    ...(asTrimmedString(subagent.description)
+      ? { description: asTrimmedString(subagent.description)! }
+      : {}),
+    ...(asTrimmedString(subagent.status) ? { status: asTrimmedString(subagent.status)! } : {}),
+    ...(asTrimmedString(subagent.senderThreadId)
+      ? { senderThreadId: asTrimmedString(subagent.senderThreadId)! }
+      : {}),
+    ...(asTrimmedString(subagent.receiverThreadId)
+      ? { receiverThreadId: asTrimmedString(subagent.receiverThreadId)! }
+      : {}),
+    ...(asTrimmedString(subagent.newThreadId)
+      ? { newThreadId: asTrimmedString(subagent.newThreadId)! }
+      : {}),
+  } satisfies SubagentWorkMetadata;
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function formatSubagentThreadDetail(subagent: SubagentWorkMetadata): string | undefined {
+  const delegatedThreadId = subagent.receiverThreadId ?? subagent.newThreadId;
+  if (!delegatedThreadId) {
+    return undefined;
+  }
+  return `Working in thread ${delegatedThreadId}`;
 }
 
 function extractToolExitCode(payload: Record<string, unknown> | null): number | null {

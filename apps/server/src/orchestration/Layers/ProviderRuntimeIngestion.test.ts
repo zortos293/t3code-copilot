@@ -1345,6 +1345,67 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("preserves subagent tool metadata for orchestration activity rendering", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-tool-completed-subagent"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-tool-subagent"),
+      itemId: asItemId("item-tool-subagent"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Delegated to reviewer",
+        detail: "Review the diff before merge.",
+        data: {
+          item: {
+            type: "collabToolCall",
+          },
+          subagent: {
+            name: "reviewer",
+            description: "Review the diff before merge.",
+            receiverThreadId: "thread-subagent-1",
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-subagent",
+      ),
+    );
+
+    const activity = thread.activities.find(
+      (entry: ProviderRuntimeTestActivity) => entry.id === "evt-tool-completed-subagent",
+    );
+    const payload =
+      activity?.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.kind).toBe("tool.completed");
+    expect(activity?.summary).toBe("Delegated to reviewer");
+    expect(payload?.itemType).toBe("collab_agent_tool_call");
+    expect(payload?.title).toBe("Delegated to reviewer");
+    expect(payload?.detail).toBe("Review the diff before merge.");
+    expect(payload?.data).toEqual({
+      item: {
+        type: "collabToolCall",
+      },
+      subagent: {
+        name: "reviewer",
+        description: "Review the diff before merge.",
+        receiverThreadId: "thread-subagent-1",
+      },
+    });
+  });
+
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

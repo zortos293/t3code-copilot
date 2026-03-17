@@ -535,6 +535,34 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.itemType).toBe("web_search");
   });
 
+  it("formats subagent tool entries from normalized adapter metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-tool",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          data: {
+            subagent: {
+              name: "reviewer",
+              description: "Review the diff before merge.",
+              receiverThreadId: "thread-subagent-1",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      activityKind: "tool.completed",
+      itemType: "collab_agent_tool_call",
+      toolTitle: "Delegated to reviewer",
+      detail: "Review the diff before merge.",
+    });
+  });
+
   it("maps request kinds for approval work log entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

@@ -109,6 +109,16 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function firstNonEmptyString(...values: ReadonlyArray<unknown>): string | undefined {
+  for (const value of values) {
+    const normalized = asString(value)?.trim();
+    if (normalized && normalized.length > 0) {
+      return normalized;
+    }
+  }
+  return undefined;
+}
+
 function toTurnStatus(value: unknown): "completed" | "failed" | "cancelled" | "interrupted" {
   switch (value) {
     case "completed":
@@ -153,7 +163,87 @@ function toCanonicalItemType(raw: unknown): CanonicalItemType {
   return "unknown";
 }
 
-function itemTitle(itemType: CanonicalItemType): string | undefined {
+function normalizeSubagentMetadata(
+  item: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): Record<string, string> | undefined {
+  const data = asObject(payload.data);
+  const records = [
+    item,
+    payload,
+    data,
+    asObject(item.agent),
+    asObject(item.subagent),
+    asObject(item.collabToolCall),
+    asObject(payload.agent),
+    asObject(payload.subagent),
+    asObject(payload.collabToolCall),
+    asObject(data?.agent),
+    asObject(data?.subagent),
+    asObject(data?.collabToolCall),
+  ].filter((record): record is Record<string, unknown> => record !== undefined);
+
+  const readField = (...keys: ReadonlyArray<string>) =>
+    firstNonEmptyString(...records.flatMap((record) => keys.map((key) => record[key])));
+
+  const metadata = {
+    ...(readField(
+      "name",
+      "agentName",
+      "subagentName",
+      "agent_name",
+      "subagent_name",
+      "agent",
+      "subagent",
+    )
+      ? {
+          name: readField(
+            "name",
+            "agentName",
+            "subagentName",
+            "agent_name",
+            "subagent_name",
+            "agent",
+            "subagent",
+          )!,
+        }
+      : {}),
+    ...(readField("description", "task", "taskDescription", "prompt", "summary", "message")
+      ? {
+          description: readField(
+            "description",
+            "task",
+            "taskDescription",
+            "prompt",
+            "summary",
+            "message",
+          )!,
+        }
+      : {}),
+    ...(readField("status", "agentStatus", "subagentStatus", "state")
+      ? { status: readField("status", "agentStatus", "subagentStatus", "state")! }
+      : {}),
+    ...(readField("senderThreadId", "sender_thread_id")
+      ? { senderThreadId: readField("senderThreadId", "sender_thread_id")! }
+      : {}),
+    ...(readField("receiverThreadId", "receiver_thread_id")
+      ? { receiverThreadId: readField("receiverThreadId", "receiver_thread_id")! }
+      : {}),
+    ...(readField("newThreadId", "new_thread_id")
+      ? { newThreadId: readField("newThreadId", "new_thread_id")! }
+      : {}),
+  };
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function itemTitle(
+  itemType: CanonicalItemType,
+  item: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): string | undefined {
+  const subagent =
+    itemType === "collab_agent_tool_call" ? normalizeSubagentMetadata(item, payload) : undefined;
   switch (itemType) {
     case "assistant_message":
       return "Assistant message";
@@ -171,6 +261,8 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
       return "MCP tool call";
     case "dynamic_tool_call":
       return "Tool call";
+    case "collab_agent_tool_call":
+      return subagent?.name ? `Delegated to ${subagent.name}` : "Subagent task";
     case "web_search":
       return "Web search";
     case "image_view":
@@ -183,11 +275,15 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
 }
 
 function itemDetail(
+  itemType: CanonicalItemType,
   item: Record<string, unknown>,
   payload: Record<string, unknown>,
 ): string | undefined {
+  const subagent =
+    itemType === "collab_agent_tool_call" ? normalizeSubagentMetadata(item, payload) : undefined;
   const nestedResult = asObject(item.result);
   const candidates = [
+    subagent?.description,
     asString(item.command),
     asString(item.title),
     asString(item.summary),
@@ -495,7 +591,12 @@ function mapItemLifecycle(
     return undefined;
   }
 
-  const detail = itemDetail(source, payload ?? {});
+  const detail = itemDetail(itemType, source, payload ?? {});
+  const title = itemTitle(itemType, source, payload ?? {});
+  const subagent =
+    itemType === "collab_agent_tool_call"
+      ? normalizeSubagentMetadata(source, payload ?? {})
+      : undefined;
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -503,15 +604,24 @@ function mapItemLifecycle(
         ? "completed"
         : undefined;
 
+  const data =
+    event.payload === undefined
+      ? undefined
+      : subagent
+        ? typeof event.payload === "object" && event.payload !== null
+          ? { ...(event.payload as Record<string, unknown>), subagent }
+          : { raw: event.payload, subagent }
+        : event.payload;
+
   return {
     ...runtimeEventBase(event, canonicalThreadId),
     type: lifecycle,
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(title ? { title } : {}),
       ...(detail ? { detail } : {}),
-      ...(event.payload !== undefined ? { data: event.payload } : {}),
+      ...(data !== undefined ? { data } : {}),
     },
   };
 }
@@ -816,7 +926,7 @@ function mapToRuntimeEvents(
     }
     const itemType = source ? toCanonicalItemType(source.type ?? source.kind) : "unknown";
     if (itemType === "plan") {
-      const detail = itemDetail(source, payload ?? {});
+      const detail = itemDetail(itemType, source, payload ?? {});
       if (!detail) {
         return [];
       }
