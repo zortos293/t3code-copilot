@@ -43,6 +43,7 @@ interface FakeGhScenario {
 interface FakeGitTextGeneration {
   generateCommitMessage: (input: {
     cwd: string;
+    provider?: "codex" | "copilot";
     branch: string | null;
     stagedSummary: string;
     stagedPatch: string;
@@ -53,6 +54,7 @@ interface FakeGitTextGeneration {
   >;
   generatePrContent: (input: {
     cwd: string;
+    provider?: "codex" | "copilot";
     baseBranch: string;
     headBranch: string;
     commitSummary: string;
@@ -61,6 +63,7 @@ interface FakeGitTextGeneration {
   }) => Effect.Effect<{ title: string; body: string }, TextGenerationError>;
   generateBranchName: (input: {
     cwd: string;
+    provider?: "codex" | "copilot";
     message: string;
   }) => Effect.Effect<{ branch: string }, TextGenerationError>;
 }
@@ -449,6 +452,7 @@ function runStackedAction(
   input: {
     cwd: string;
     action: "commit" | "commit_push" | "commit_push_pr";
+    provider?: "codex" | "copilot";
     commitMessage?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
@@ -840,6 +844,60 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       );
       expect(mergeBase).toBe(mainSha);
       expect(generatedCount).toBe(1);
+    }),
+  );
+
+  it.effect("passes the selected provider to generated commit and PR content", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/copilot-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      fs.writeFileSync(path.join(repoDir, "feature.txt"), "copilot flow\n");
+
+      const seenProviders: Array<"codex" | "copilot" | undefined> = [];
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            JSON.stringify([
+              {
+                number: 91,
+                title: "Add stacked git actions",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/91",
+                baseRefName: "main",
+                headRefName: "feature/copilot-pr",
+              },
+            ]),
+          ],
+        },
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              seenProviders.push(input.provider);
+              return { subject: "Use GitHub Copilot for git copy", body: "" };
+            }),
+          generatePrContent: (input) =>
+            Effect.sync(() => {
+              seenProviders.push(input.provider);
+              return {
+                title: "Use GitHub Copilot for git copy",
+                body: "## Summary\n- Route git copy through Copilot\n\n## Testing\n- Not run",
+              };
+            }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+        provider: "copilot",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.pr.status).toBe("created");
+      expect(seenProviders).toEqual(["copilot", "copilot"]);
     }),
   );
 

@@ -8,12 +8,13 @@
  */
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
-import type { ChatAttachment } from "@t3tools/contracts";
+import type { ChatAttachment, ProviderKind } from "@t3tools/contracts";
 
 import type { TextGenerationError } from "../Errors.ts";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
+  provider?: ProviderKind;
   branch: string | null;
   stagedSummary: string;
   stagedPatch: string;
@@ -30,6 +31,7 @@ export interface CommitMessageGenerationResult {
 
 export interface PrContentGenerationInput {
   cwd: string;
+  provider?: ProviderKind;
   baseBranch: string;
   headBranch: string;
   commitSummary: string;
@@ -44,6 +46,7 @@ export interface PrContentGenerationResult {
 
 export interface BranchNameGenerationInput {
   cwd: string;
+  provider?: ProviderKind;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }

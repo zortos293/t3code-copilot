@@ -1,5 +1,6 @@
 import {
   type EditorId,
+  type ProviderKind,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -26,6 +27,7 @@ interface ChatHeaderProps {
   availableEditors: ReadonlyArray<EditorId>;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
+  activeProvider: ProviderKind;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
@@ -46,6 +48,7 @@ export const ChatHeader = memo(function ChatHeader({
   availableEditors,
   diffToggleShortcutLabel,
   gitCwd,
+  activeProvider,
   diffOpen,
   onRunProjectScript,
   onAddProjectScript,
@@ -93,7 +96,13 @@ export const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+            activeProvider={activeProvider}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={

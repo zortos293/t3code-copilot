@@ -1,4 +1,4 @@
-import type { GitStackedAction } from "@t3tools/contracts";
+import type { GitStackedAction, ProviderKind } from "@t3tools/contracts";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 
@@ -117,11 +117,13 @@ export function gitRunStackedActionMutationOptions(input: {
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
     mutationFn: async ({
       action,
+      provider,
       commitMessage,
       featureBranch,
       filePaths,
     }: {
       action: GitStackedAction;
+      provider?: ProviderKind;
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
@@ -131,6 +133,7 @@ export function gitRunStackedActionMutationOptions(input: {
       return api.git.runStackedAction({
         cwd: input.cwd,
         action,
+        ...(provider ? { provider } : {}),
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),

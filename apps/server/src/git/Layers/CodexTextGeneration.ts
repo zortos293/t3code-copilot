@@ -2,11 +2,20 @@ import { randomUUID } from "node:crypto";
 
 import { Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import {
+  CopilotClient,
+  type CopilotClientOptions,
+  type PermissionRequest,
+  type PermissionRequestResult,
+  type SessionEvent,
+} from "@github/copilot-sdk";
+import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
 
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveBundledCopilotCliPath } from "../../provider/Layers/copilotCliPath.ts";
 import { TextGenerationError } from "../Errors.ts";
 import {
   type BranchNameGenerationInput,
@@ -20,6 +29,9 @@ import {
 const CODEX_MODEL = "gpt-5.3-codex";
 const CODEX_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
+const COPILOT_MODEL = DEFAULT_MODEL_BY_PROVIDER.copilot;
+const COPILOT_TIMEOUT_MS = 180_000;
+const COPILOT_TIMEOUT_CANCELLATION_GRACE_MS = 5_000;
 
 function toCodexOutputJsonSchema(schema: Schema.Top): unknown {
   const document = Schema.toJsonSchemaDocument(schema);
@@ -68,6 +80,44 @@ function normalizeCodexError(
   });
 }
 
+function normalizeCopilotError(
+  operation: string,
+  error: unknown,
+  fallback: string,
+): TextGenerationError {
+  if (Schema.is(TextGenerationError)(error)) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    const lower = error.message.toLowerCase();
+    if (
+      lower.includes("copilot") &&
+      (lower.includes("enoent") ||
+        lower.includes("not found") ||
+        lower.includes("missing") ||
+        lower.includes("spawn"))
+    ) {
+      return new TextGenerationError({
+        operation,
+        detail: "GitHub Copilot CLI is required but not available.",
+        cause: error,
+      });
+    }
+    return new TextGenerationError({
+      operation,
+      detail: `${fallback}: ${error.message}`,
+      cause: error,
+    });
+  }
+
+  return new TextGenerationError({
+    operation,
+    detail: fallback,
+    cause: error,
+  });
+}
+
 function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   const truncated = value.slice(0, maxChars);
@@ -93,6 +143,107 @@ function sanitizePrTitle(raw: string): string {
     return singleLine;
   }
   return "Update project changes";
+}
+
+function extractJsonCandidate(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fencedMatch?.[1]) {
+    return fencedMatch[1].trim();
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+
+  return trimmed;
+}
+
+function denyCopilotPermissionRequest(_request: PermissionRequest): PermissionRequestResult {
+  return { kind: "denied-by-rules" };
+}
+
+function withPromiseTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+  cancelOnTimeout: () => Promise<void> | void,
+  onTimeout: () => Error,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      void Promise.race([
+        Promise.resolve(cancelOnTimeout()).catch(() => undefined),
+        new Promise<void>((resolveCancellation) => {
+          setTimeout(resolveCancellation, COPILOT_TIMEOUT_CANCELLATION_GRACE_MS);
+        }),
+      ]).finally(() => {
+        reject(onTimeout());
+      });
+    }, timeoutMs);
+
+    void operation().then(
+      (value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+function extractLastCopilotAssistantText(events: ReadonlyArray<SessionEvent>): string {
+  let latestCompleted = "";
+  const deltaByMessageId = new Map<string, string>();
+  let latestDeltaMessageId: string | null = null;
+
+  for (const event of events) {
+    if (event.type === "assistant.message") {
+      const content = event.data.content.trim();
+      if (content.length > 0) {
+        latestCompleted = content;
+      }
+      continue;
+    }
+
+    if (event.type === "assistant.message_delta") {
+      const next = `${deltaByMessageId.get(event.data.messageId) ?? ""}${event.data.deltaContent}`;
+      deltaByMessageId.set(event.data.messageId, next);
+      latestDeltaMessageId = event.data.messageId;
+    }
+  }
+
+  if (latestCompleted.length > 0) {
+    return latestCompleted;
+  }
+
+  if (latestDeltaMessageId) {
+    return (deltaByMessageId.get(latestDeltaMessageId) ?? "").trim();
+  }
+
+  return "";
 }
 
 const makeCodexTextGeneration = Effect.gen(function* () {
@@ -178,6 +329,39 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         imagePaths.push(resolvedPath);
       }
       return { imagePaths };
+    });
+
+  const decodeStructuredText = <S extends Schema.Top>({
+    operation,
+    text,
+    outputSchemaJson,
+  }: {
+    operation: "generateCommitMessage" | "generatePrContent" | "generateBranchName";
+    text: string;
+    outputSchemaJson: S;
+  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
+    Effect.gen(function* () {
+      const jsonText = extractJsonCandidate(text);
+      const parsed = yield* Effect.try({
+        try: () => JSON.parse(jsonText) as unknown,
+        catch: (cause) =>
+          new TextGenerationError({
+            operation,
+            detail: "Provider returned invalid JSON output.",
+            cause,
+          }),
+      });
+
+      return yield* Schema.decodeUnknownEffect(outputSchemaJson)(parsed).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Provider returned invalid structured output.",
+              cause,
+            }),
+        ),
+      );
     });
 
   const runCodexJson = <S extends Schema.Top>({
@@ -312,6 +496,92 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       }).pipe(Effect.ensuring(cleanup));
     });
 
+  const runCopilotJson = <S extends Schema.Top>({
+    operation,
+    cwd,
+    prompt,
+    outputSchemaJson,
+  }: {
+    operation: "generateCommitMessage" | "generatePrContent" | "generateBranchName";
+    cwd: string;
+    prompt: string;
+    outputSchemaJson: S;
+  }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
+    Effect.tryPromise({
+      try: async () => {
+        const cliPath = resolveBundledCopilotCliPath();
+        const clientOptions: CopilotClientOptions = {
+          ...(cliPath ? { cliPath } : {}),
+          cwd,
+          logLevel: "error",
+        };
+        const client = new CopilotClient(clientOptions);
+        let session: Awaited<ReturnType<CopilotClient["createSession"]>> | undefined;
+
+        try {
+          return await withPromiseTimeout(
+            async () => {
+              await client.start();
+              session = await client.createSession({
+                workingDirectory: cwd,
+                model: COPILOT_MODEL,
+                streaming: true,
+                availableTools: [],
+                onPermissionRequest: denyCopilotPermissionRequest,
+              });
+
+              const response = await (async () => {
+                try {
+                  return await session.sendAndWait(
+                    {
+                      prompt,
+                      mode: "immediate",
+                    },
+                    COPILOT_TIMEOUT_MS,
+                  );
+                } catch (error) {
+                  const history = await session.getMessages().catch(() => [] as SessionEvent[]);
+                  const assistantText = extractLastCopilotAssistantText(history);
+                  if (assistantText.length > 0) {
+                    return {
+                      data: {
+                        content: assistantText,
+                      },
+                    };
+                  }
+                  throw error;
+                }
+              })();
+              const history = await session.getMessages().catch(() => [] as SessionEvent[]);
+              const assistantText =
+                response?.data.content?.trim() || extractLastCopilotAssistantText(history);
+              if (assistantText.length === 0) {
+                throw new Error("GitHub Copilot did not return an assistant response.");
+              }
+              return assistantText;
+            },
+            COPILOT_TIMEOUT_MS,
+            () =>
+              Promise.race([
+                Promise.allSettled([
+                  session ? session.abort().catch(() => undefined) : Promise.resolve(undefined),
+                  client.forceStop().catch(() => undefined),
+                ]).then(() => undefined),
+                new Promise<void>((resolveCancellation) => {
+                  setTimeout(resolveCancellation, COPILOT_TIMEOUT_CANCELLATION_GRACE_MS);
+                }),
+              ]).then(() => undefined),
+            () => new Error("GitHub Copilot request timed out."),
+          );
+        } finally {
+          await session?.destroy().catch(() => undefined);
+          await client.stop().catch(() => []);
+        }
+      },
+      catch: (cause) =>
+        normalizeCopilotError(operation, cause, "GitHub Copilot text generation failed"),
+    }).pipe(Effect.flatMap((text) => decodeStructuredText({ operation, text, outputSchemaJson })));
+
   const generateCommitMessage: TextGenerationShape["generateCommitMessage"] = (input) => {
     const wantsBranch = input.includeBranch === true;
 
@@ -348,12 +618,22 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           body: Schema.String,
         });
 
-    return runCodexJson({
-      operation: "generateCommitMessage",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson,
-    }).pipe(
+    const generateJson =
+      input.provider === "copilot"
+        ? runCopilotJson({
+            operation: "generateCommitMessage",
+            cwd: input.cwd,
+            prompt,
+            outputSchemaJson,
+          })
+        : runCodexJson({
+            operation: "generateCommitMessage",
+            cwd: input.cwd,
+            prompt,
+            outputSchemaJson,
+          });
+
+    return generateJson.pipe(
       Effect.map(
         (generated) =>
           ({
@@ -390,15 +670,27 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       limitSection(input.diffPatch, 40_000),
     ].join("\n");
 
-    return runCodexJson({
-      operation: "generatePrContent",
-      cwd: input.cwd,
-      prompt,
-      outputSchemaJson: Schema.Struct({
-        title: Schema.String,
-        body: Schema.String,
-      }),
-    }).pipe(
+    const outputSchemaJson = Schema.Struct({
+      title: Schema.String,
+      body: Schema.String,
+    });
+
+    const generateJson =
+      input.provider === "copilot"
+        ? runCopilotJson({
+            operation: "generatePrContent",
+            cwd: input.cwd,
+            prompt,
+            outputSchemaJson,
+          })
+        : runCodexJson({
+            operation: "generatePrContent",
+            cwd: input.cwd,
+            prompt,
+            outputSchemaJson,
+          });
+
+    return generateJson.pipe(
       Effect.map(
         (generated) =>
           ({
@@ -441,15 +733,32 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       }
       const prompt = promptSections.join("\n");
 
-      const generated = yield* runCodexJson({
-        operation: "generateBranchName",
-        cwd: input.cwd,
-        prompt,
-        outputSchemaJson: Schema.Struct({
-          branch: Schema.String,
-        }),
-        imagePaths,
+      const outputSchemaJson = Schema.Struct({
+        branch: Schema.String,
       });
+
+      if (input.provider === "copilot" && imagePaths.length > 0) {
+        return yield* new TextGenerationError({
+          operation: "generateBranchName",
+          detail: "Copilot branch generation does not support image attachments yet.",
+        });
+      }
+
+      const generated =
+        input.provider === "copilot"
+          ? yield* runCopilotJson({
+              operation: "generateBranchName",
+              cwd: input.cwd,
+              prompt,
+              outputSchemaJson,
+            })
+          : yield* runCodexJson({
+              operation: "generateBranchName",
+              cwd: input.cwd,
+              prompt,
+              outputSchemaJson,
+              imagePaths,
+            });
 
       return {
         branch: sanitizeBranchFragment(generated.branch),

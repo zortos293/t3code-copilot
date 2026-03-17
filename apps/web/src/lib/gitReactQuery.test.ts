@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as nativeApi from "../nativeApi";
 import {
   gitMutationKeys,
   gitPreparePullRequestThreadMutationOptions,
@@ -28,9 +29,48 @@ describe("gitMutationKeys", () => {
 describe("git mutation options", () => {
   const queryClient = new QueryClient();
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("attaches cwd-scoped mutation key for runStackedAction", () => {
     const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
     expect(options.mutationKey).toEqual(gitMutationKeys.runStackedAction("/repo/a"));
+  });
+
+  it("forwards provider to runStackedAction RPC", async () => {
+    const runStackedAction = vi.fn(async () => ({
+      action: "commit",
+      branch: { status: "skipped_not_requested" },
+      commit: { status: "created", subject: "Use Copilot" },
+      push: { status: "skipped_not_requested" },
+      pr: { status: "skipped_not_requested" },
+    }));
+
+    vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+      git: {
+        runStackedAction,
+      },
+    } as never);
+
+    const options = gitRunStackedActionMutationOptions({ cwd: "/repo/a", queryClient });
+    if (!options.mutationFn) {
+      throw new Error("Expected mutationFn to be defined.");
+    }
+
+    await options.mutationFn(
+      {
+        action: "commit",
+        provider: "copilot",
+      },
+      {} as never,
+    );
+
+    expect(runStackedAction).toHaveBeenCalledWith({
+      cwd: "/repo/a",
+      action: "commit",
+      provider: "copilot",
+    });
   });
 
   it("attaches cwd-scoped mutation key for pull", () => {

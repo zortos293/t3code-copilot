@@ -1,4 +1,4 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type { GitStackedAction, GitStatusResult, ProviderKind, ThreadId } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
@@ -48,12 +48,14 @@ import { readNativeApi } from "~/nativeApi";
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+  activeProvider: ProviderKind;
 }
 
 interface PendingDefaultBranchAction {
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
+  provider: ProviderKind;
   commitMessage?: string;
   forcePushOnlyProgress: boolean;
   onConfirmed?: () => void;
@@ -153,7 +155,11 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({
+  gitCwd,
+  activeThreadId,
+  activeProvider,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -258,6 +264,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const runGitActionWithToast = useCallback(
     async ({
       action,
+      provider = activeProvider,
       commitMessage,
       forcePushOnlyProgress = false,
       onConfirmed,
@@ -269,6 +276,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
       filePaths,
     }: {
       action: GitStackedAction;
+      provider?: ProviderKind;
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
@@ -297,6 +305,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
           action,
           branchName: actionBranch,
           includesCommit,
+          provider,
           ...(commitMessage ? { commitMessage } : {}),
           forcePushOnlyProgress,
           ...(onConfirmed ? { onConfirmed } : {}),
@@ -348,6 +357,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
       const promise = runImmediateGitActionMutation.mutateAsync({
         action,
+        provider,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
@@ -442,6 +452,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
     },
 
     [
+      activeProvider,
       isDefaultBranch,
       runImmediateGitActionMutation,
       setPendingDefaultBranchAction,
@@ -452,11 +463,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const continuePendingDefaultBranchAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed, filePaths } =
+    const { action, provider, commitMessage, forcePushOnlyProgress, onConfirmed, filePaths } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
       action,
+      provider,
       ...(commitMessage ? { commitMessage } : {}),
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
@@ -468,6 +480,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
   const checkoutNewBranchAndRunAction = useCallback(
     (actionParams: {
       action: GitStackedAction;
+      provider?: ProviderKind;
       commitMessage?: string;
       forcePushOnlyProgress?: boolean;
       onConfirmed?: () => void;
@@ -484,11 +497,12 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, forcePushOnlyProgress, onConfirmed, filePaths } =
+    const { action, provider, commitMessage, forcePushOnlyProgress, onConfirmed, filePaths } =
       pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     checkoutNewBranchAndRunAction({
       action,
+      provider,
       ...(commitMessage ? { commitMessage } : {}),
       forcePushOnlyProgress,
       ...(onConfirmed ? { onConfirmed } : {}),
