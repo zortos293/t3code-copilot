@@ -44,6 +44,15 @@ function tokenStartForCursor(text: string, cursor: number): number {
   return index + 1;
 }
 
+function isCursorInsideActiveTrailingInlineQuery(text: string, cursor: number): boolean {
+  if (cursor !== text.length || cursor === 0) {
+    return false;
+  }
+  const tokenStart = tokenStartForCursor(text, cursor);
+  const token = text.slice(tokenStart, cursor);
+  return token.startsWith("@") || token.startsWith("$");
+}
+
 export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
   const collapsedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
@@ -178,6 +187,12 @@ export function isCollapsedCursorAdjacentToInlineToken(
   cursorInput: number,
   direction: "left" | "right",
 ): boolean {
+  const rawCursor = clampCursor(text, cursorInput);
+  if (isCursorInsideActiveTrailingInlineQuery(text, rawCursor)) {
+    return false;
+  }
+
+  const collapsedCursor = clampCollapsedComposerCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
   if (!segments.some(isInlineTokenSegment)) {
     return false;
@@ -185,7 +200,7 @@ export function isCollapsedCursorAdjacentToInlineToken(
 
   const cursor = clampCollapsedComposerCursorForSegments(
     segments as ReadonlyArray<ComposerInlineSegment>,
-    cursorInput,
+    collapsedCursor,
   );
   let collapsedOffset = 0;
 
