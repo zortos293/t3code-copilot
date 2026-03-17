@@ -16,6 +16,12 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
   });
 
+  it("maps copilot aliases to canonical slugs", () => {
+    expect(normalizeModelSlug("5.4-mini", "copilot")).toBe("gpt-5.4-mini");
+    expect(normalizeModelSlug("gemini-3.1", "copilot")).toBe("gemini-3.1-pro");
+    expect(normalizeModelSlug("raptor", "copilot")).toBe("raptor-mini");
+  });
+
   it("returns null for empty or missing values", () => {
     expect(normalizeModelSlug("")).toBeNull();
     expect(normalizeModelSlug("   ")).toBeNull();
@@ -50,6 +56,13 @@ describe("resolveModelSlug", () => {
       expect(resolveModelSlug(model.slug)).toBe(model.slug);
     }
   });
+
+  it("resolves supported copilot model options", () => {
+    for (const model of MODEL_OPTIONS_BY_PROVIDER.copilot) {
+      expect(resolveModelSlug(model.slug, "copilot")).toBe(model.slug);
+    }
+  });
+
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);

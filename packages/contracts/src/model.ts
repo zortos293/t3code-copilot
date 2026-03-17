@@ -35,6 +35,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
   ],
   copilot: [
     { slug: "gpt-5.4", name: "GPT-5.4" },
+    { slug: "gpt-5.4-mini", name: "GPT-5.4 mini" },
     { slug: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
     { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
     { slug: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
@@ -43,6 +44,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "claude-opus-4.5", name: "Claude Opus 4.5" },
     { slug: "claude-sonnet-4", name: "Claude Sonnet 4" },
     { slug: "gemini-3-pro-preview", name: "Gemini 3 Pro (Preview)" },
+    { slug: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
     { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
     { slug: "gpt-5.2-codex", name: "GPT-5.2 Codex" },
     { slug: "gpt-5.2", name: "GPT-5.2" },
@@ -52,6 +54,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.1", name: "GPT-5.1" },
     { slug: "gpt-5-mini", name: "GPT-5 mini" },
     { slug: "gpt-4.1", name: "GPT-4.1" },
+    { slug: "raptor-mini", name: "Raptor mini" },
   ],
 } as const satisfies Record<ProviderKind, readonly ModelOption[]>;
 export type ModelOptionsByProvider = typeof MODEL_OPTIONS_BY_PROVIDER;
@@ -75,6 +78,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
   copilot: {
     "4.1": "gpt-4.1",
     "5.4": "gpt-5.4",
+    "5.4-mini": "gpt-5.4-mini",
     "5-mini": "gpt-5-mini",
     "5.1": "gpt-5.1",
     "5.1-codex": "gpt-5.1-codex",
@@ -87,6 +91,8 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
     sonnet: "claude-sonnet-4.6",
     opus: "claude-opus-4.6",
     gemini: "gemini-3-pro-preview",
+    "gemini-3.1": "gemini-3.1-pro",
+    raptor: "raptor-mini",
   },
 } as const satisfies Record<ProviderKind, Record<string, ModelSlug>>;
 
