@@ -103,6 +103,26 @@ async function waitForThread(
   return poll();
 }
 
+async function waitForReadModel(
+  engine: OrchestrationEngineShape,
+  predicate: (readModel: ProviderRuntimeTestReadModel) => boolean,
+  timeoutMs = 2000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  const poll = async (): Promise<ProviderRuntimeTestReadModel> => {
+    const readModel = await Effect.runPromise(engine.getReadModel());
+    if (predicate(readModel)) {
+      return readModel;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for read model state");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return poll();
+  };
+  return poll();
+}
+
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
@@ -1251,6 +1271,9 @@ describe("ProviderRuntimeIngestion", () => {
       provider: "codex",
       createdAt: now,
       threadId: asThreadId("thread-1"),
+      payload: {
+        providerThreadId: "provider-thread-1",
+      },
     });
     harness.emit({
       type: "item.started",
@@ -1278,6 +1301,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.providerThreadId).toBe("provider-thread-1");
     expect(
       thread.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.started",
@@ -1404,6 +1428,92 @@ describe("ProviderRuntimeIngestion", () => {
         receiverThreadId: "thread-subagent-1",
       },
     });
+  });
+
+  it("creates and routes delegated subagent provider threads into child orchestration threads", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "thread.started",
+      eventId: asEventId("evt-parent-thread-started"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        providerThreadId: "provider-parent-1",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.providerThreadId === "provider-parent-1",
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-created"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-parent"),
+      itemId: asItemId("item-subagent"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Subagent task - Inspect /Users/zortos/junk",
+        detail: "Inspect /Users/zortos/junk focusing on repository structure.",
+        data: {
+          subagent: {
+            receiverThreadId: "provider-child-1",
+          },
+        },
+      },
+    });
+
+    let readModel = await waitForReadModel(harness.engine, (entry) =>
+      entry.threads.some((thread) => thread.session?.providerThreadId === "provider-child-1"),
+    );
+    let childThread = readModel.threads.find(
+      (thread) => thread.session?.providerThreadId === "provider-child-1",
+    );
+    expect(childThread?.title).toContain("Inspect /Users/zortos/junk");
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-child-thread-running"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      payload: {
+        state: "running",
+      },
+      raw: {
+        source: "protocol-notification",
+        method: "session/state/changed",
+        payload: {
+          thread: {
+            id: "provider-child-1",
+          },
+        },
+      },
+    });
+
+    readModel = await waitForReadModel(harness.engine, (entry) =>
+      entry.threads.some(
+        (thread) =>
+          thread.session?.providerThreadId === "provider-child-1" &&
+          thread.session?.status === "running",
+      ),
+    );
+    childThread = readModel.threads.find(
+      (thread) => thread.session?.providerThreadId === "provider-child-1",
+    );
+    const parentThread = readModel.threads.find((thread) => thread.id === asThreadId("thread-1"));
+
+    expect(childThread?.session?.status).toBe("running");
+    expect(childThread?.session?.parentThreadId).toBe(asThreadId("thread-1"));
+    expect(parentThread?.session?.providerThreadId).toBe("provider-parent-1");
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {

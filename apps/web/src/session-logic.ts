@@ -17,6 +17,7 @@ import type {
   ThreadSession,
   TurnDiffSummary,
 } from "./types";
+import { extractSubagentMetadata, type SubagentMetadata } from "./subagent";
 
 export type ProviderPickerKind = ProviderKind | "claudeCode" | "cursor";
 
@@ -46,16 +47,11 @@ export interface WorkLogEntry {
   toolStatus?: "inProgress" | "completed" | "failed" | "declined";
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
+  /** Activity ID for subagent entries — enables navigation to the subagent view. */
+  subagentActivityId?: string;
 }
 
-interface SubagentWorkMetadata {
-  name?: string;
-  description?: string;
-  status?: string;
-  senderThreadId?: string;
-  receiverThreadId?: string;
-  newThreadId?: string;
-}
+type SubagentWorkMetadata = SubagentMetadata;
 
 export interface PendingApproval {
   requestId: ApprovalRequestId;
@@ -486,6 +482,7 @@ export function deriveWorkLogEntries(
             entry.detail = subagentDetail;
           }
         }
+        entry.subagentActivityId = activity.id;
       }
       if (status) {
         entry.toolStatus = status;
@@ -562,35 +559,6 @@ function extractToolStatus(
 
 function asInteger(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
-}
-
-function extractSubagentMetadata(
-  payload: Record<string, unknown> | null,
-): SubagentWorkMetadata | undefined {
-  const data = asRecord(payload?.data);
-  const subagent = asRecord(data?.subagent);
-  if (!subagent) {
-    return undefined;
-  }
-
-  const metadata = {
-    ...(asTrimmedString(subagent.name) ? { name: asTrimmedString(subagent.name)! } : {}),
-    ...(asTrimmedString(subagent.description)
-      ? { description: asTrimmedString(subagent.description)! }
-      : {}),
-    ...(asTrimmedString(subagent.status) ? { status: asTrimmedString(subagent.status)! } : {}),
-    ...(asTrimmedString(subagent.senderThreadId)
-      ? { senderThreadId: asTrimmedString(subagent.senderThreadId)! }
-      : {}),
-    ...(asTrimmedString(subagent.receiverThreadId)
-      ? { receiverThreadId: asTrimmedString(subagent.receiverThreadId)! }
-      : {}),
-    ...(asTrimmedString(subagent.newThreadId)
-      ? { newThreadId: asTrimmedString(subagent.newThreadId)! }
-      : {}),
-  } satisfies SubagentWorkMetadata;
-
-  return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
 function formatSubagentThreadDetail(subagent: SubagentWorkMetadata): string | undefined {

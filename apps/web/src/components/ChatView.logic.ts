@@ -141,6 +141,21 @@ export function resolveProviderHealthBannerProvider(input: {
 
 export function deriveVisibleThreadWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
+  subagentActivityId?: string,
 ): WorkLogEntry[] {
-  return deriveWorkLogEntries(activities, undefined);
+  const normalizedSubagentActivityId =
+    typeof subagentActivityId === "string" ? subagentActivityId.trim() : "";
+  if (normalizedSubagentActivityId.length === 0) {
+    return deriveWorkLogEntries(activities, undefined).filter(
+      (entry) => entry.itemType !== "collab_agent_tool_call",
+    );
+  }
+
+  const focusedActivities = activities.filter(
+    (activity) => activity.id === normalizedSubagentActivityId,
+  );
+  return deriveWorkLogEntries(
+    focusedActivities.length > 0 ? focusedActivities : activities,
+    undefined,
+  );
 }

@@ -227,6 +227,50 @@ describe("store read model sync", () => {
     expect(next.threads[0]?.model).toBe("claude-sonnet-4.6");
   });
 
+  it("maps provider thread ids into the web thread model for nested subagent linking", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerThreadId: "codex-thread-child-1",
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:00.000Z",
+        },
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.codexThreadId).toBe("codex-thread-child-1");
+  });
+
+  it("maps parent thread ids into the web session model for stable subagent nesting", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          parentThreadId: ThreadId.makeUnsafe("thread-parent-1"),
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:00.000Z",
+        },
+      }),
+    );
+
+    const next = syncServerReadModel(initialState, readModel);
+
+    expect(next.threads[0]?.session?.parentThreadId).toBe("thread-parent-1");
+  });
+
   it("infers copilot for builtin copilot models without a session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(

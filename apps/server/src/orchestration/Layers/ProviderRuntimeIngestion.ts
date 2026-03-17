@@ -109,12 +109,80 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
-  const payload = (event as { payload?: unknown }).payload;
-  if (!payload || typeof payload !== "object") {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  return payload as Record<string, unknown>;
+  return value as Record<string, unknown>;
+}
+
+function runtimePayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
+  const payload = (event as { payload?: unknown }).payload;
+  return asRecord(payload);
+}
+
+function runtimeRawPayloadRecord(event: ProviderRuntimeEvent): Record<string, unknown> | undefined {
+  return asRecord(event.raw?.payload);
+}
+
+function runtimeEventProviderThreadId(event: ProviderRuntimeEvent): string | undefined {
+  const payload = runtimePayloadRecord(event);
+  const rawPayload = runtimeRawPayloadRecord(event);
+  return (
+    asString(payload?.providerThreadId) ??
+    asString(payload?.threadId) ??
+    asString(asRecord(payload?.thread)?.id) ??
+    asString(rawPayload?.threadId) ??
+    asString(asRecord(rawPayload?.thread)?.id)
+  );
+}
+
+function delegatedSubagentProviderThreadId(event: ProviderRuntimeEvent): string | undefined {
+  const payload = runtimePayloadRecord(event);
+  const data = asRecord(payload?.data);
+  const subagent = asRecord(data?.subagent);
+  return asString(subagent?.receiverThreadId) ?? asString(subagent?.newThreadId);
+}
+
+function isSubagentDelegationEvent(event: ProviderRuntimeEvent): boolean {
+  return runtimePayloadRecord(event)?.itemType === "collab_agent_tool_call";
+}
+
+function runtimeChildThreadTitle(event: ProviderRuntimeEvent, parentThreadTitle: string): string {
+  const payload = runtimePayloadRecord(event);
+  const title = asString(payload?.title)?.trim();
+  const detail = asString(payload?.detail)?.trim();
+  if (title && title.length > 0) {
+    return truncateDetail(title, 120);
+  }
+  if (detail && detail.length > 0) {
+    return truncateDetail(detail, 120);
+  }
+  return `Subagent task - ${truncateDetail(parentThreadTitle, 72)}`;
+}
+
+function runtimeSessionStatusForEvent(
+  event: ProviderRuntimeEvent,
+): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
+  switch (event.type) {
+    case "session.state.changed":
+      return orchestrationSessionStatusFromRuntimeState(event.payload.state);
+    case "turn.started":
+    case "item.started":
+    case "item.updated":
+    case "content.delta":
+      return "running";
+    case "turn.completed":
+      return runtimeTurnState(event) === "failed" ? "error" : "ready";
+    case "turn.aborted":
+      return "interrupted";
+    case "session.exited":
+      return "stopped";
+    case "session.started":
+    case "thread.started":
+    default:
+      return "ready";
+  }
 }
 
 function normalizeRuntimeTurnState(
@@ -644,6 +712,89 @@ const make = Effect.gen(function* () {
       Cache.invalidate(assistantMessageSawDeltaByMessageId, messageId),
     ]).pipe(Effect.asVoid);
 
+  const subagentThreadIdsByProviderThreadIdRef = yield* Ref.make(new Map<string, ThreadId>());
+
+  const resolveThreadForProviderThreadId = Effect.fn(function* (input: {
+    parentThreadId: ThreadId;
+    providerThreadId: string;
+    event: ProviderRuntimeEvent;
+    createIfMissing: boolean;
+  }) {
+    const cachedThreadId = (yield* Ref.get(subagentThreadIdsByProviderThreadIdRef)).get(
+      input.providerThreadId,
+    );
+    let readModel = yield* orchestrationEngine.getReadModel();
+
+    if (cachedThreadId) {
+      const cachedThread = readModel.threads.find((entry) => entry.id === cachedThreadId);
+      if (cachedThread) {
+        return cachedThread;
+      }
+    }
+
+    const existingThread = readModel.threads.find(
+      (entry) => entry.session?.providerThreadId === input.providerThreadId,
+    );
+    if (existingThread) {
+      yield* Ref.update(subagentThreadIdsByProviderThreadIdRef, (existing) => {
+        const next = new Map(existing);
+        next.set(input.providerThreadId, existingThread.id);
+        return next;
+      });
+      return existingThread;
+    }
+
+    if (!input.createIfMissing) {
+      return undefined;
+    }
+
+    const parentThread = readModel.threads.find((entry) => entry.id === input.parentThreadId);
+    if (!parentThread) {
+      return undefined;
+    }
+
+    const childThreadId = ThreadId.makeUnsafe(crypto.randomUUID());
+    yield* orchestrationEngine.dispatch({
+      type: "thread.create",
+      commandId: providerCommandId(input.event, "subagent-thread-create"),
+      threadId: childThreadId,
+      projectId: parentThread.projectId,
+      title: runtimeChildThreadTitle(input.event, parentThread.title),
+      model: parentThread.model,
+      runtimeMode: parentThread.runtimeMode,
+      interactionMode: parentThread.interactionMode,
+      branch: parentThread.branch,
+      worktreePath: parentThread.worktreePath,
+      createdAt: input.event.createdAt,
+    });
+    yield* orchestrationEngine.dispatch({
+      type: "thread.session.set",
+      commandId: providerCommandId(input.event, "subagent-thread-session-set"),
+      threadId: childThreadId,
+      session: {
+        threadId: childThreadId,
+        status: runtimeSessionStatusForEvent(input.event),
+        providerName: input.event.provider,
+        providerThreadId: input.providerThreadId,
+        parentThreadId: input.parentThreadId,
+        runtimeMode: parentThread.runtimeMode,
+        activeTurnId: toTurnId(input.event.turnId) ?? null,
+        lastError: null,
+        updatedAt: input.event.createdAt,
+      },
+      createdAt: input.event.createdAt,
+    });
+
+    yield* Ref.update(subagentThreadIdsByProviderThreadIdRef, (existing) => {
+      const next = new Map(existing);
+      next.set(input.providerThreadId, childThreadId);
+      return next;
+    });
+
+    readModel = yield* orchestrationEngine.getReadModel();
+    return readModel.threads.find((entry) => entry.id === childThreadId);
+  });
+
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
@@ -812,8 +963,32 @@ const make = Effect.gen(function* () {
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
-      const thread = readModel.threads.find((entry) => entry.id === event.threadId);
-      if (!thread) return;
+      const parentThread = readModel.threads.find((entry) => entry.id === event.threadId);
+      if (!parentThread) return;
+
+      const delegatedProviderThreadId = delegatedSubagentProviderThreadId(event);
+      if (delegatedProviderThreadId) {
+        yield* resolveThreadForProviderThreadId({
+          parentThreadId: parentThread.id,
+          providerThreadId: delegatedProviderThreadId,
+          event,
+          createIfMissing: true,
+        });
+      }
+
+      const routedProviderThreadId = runtimeEventProviderThreadId(event);
+      const thread = isSubagentDelegationEvent(event)
+        ? parentThread
+        : routedProviderThreadId &&
+            parentThread.session?.providerThreadId &&
+            routedProviderThreadId !== parentThread.session.providerThreadId
+          ? ((yield* resolveThreadForProviderThreadId({
+              parentThreadId: parentThread.id,
+              providerThreadId: routedProviderThreadId,
+              event,
+              createIfMissing: true,
+            })) ?? parentThread)
+          : parentThread;
 
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
@@ -900,6 +1075,10 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
+          const providerThreadId =
+            event.type === "thread.started"
+              ? (event.payload.providerThreadId ?? thread.session?.providerThreadId ?? null)
+              : (thread.session?.providerThreadId ?? null);
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "thread-session-set"),
@@ -908,6 +1087,10 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status,
               providerName: event.provider,
+              ...(providerThreadId ? { providerThreadId } : {}),
+              ...(thread.session?.parentThreadId
+                ? { parentThreadId: thread.session.parentThreadId }
+                : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
@@ -1087,6 +1270,12 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
               status: "error",
               providerName: event.provider,
+              ...(thread.session?.providerThreadId
+                ? { providerThreadId: thread.session.providerThreadId }
+                : {}),
+              ...(thread.session?.parentThreadId
+                ? { parentThreadId: thread.session.parentThreadId }
+                : {}),
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,

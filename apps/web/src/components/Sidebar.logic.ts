@@ -1,6 +1,15 @@
+import type { ThreadId } from "@t3tools/contracts";
+
 import type { Thread } from "../types";
 import { cn } from "../lib/utils";
 import { findLatestProposedPlan, isLatestTurnSettled } from "../session-logic";
+import {
+  extractSubagentMetadata,
+  formatSubagentDisplayTitle,
+  resolveSubagentProviderThreadId,
+} from "../subagent";
+
+export { resolveSubagentIdentity, type SubagentIdentity } from "../subagent";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
@@ -16,6 +25,166 @@ export interface ThreadStatusPill {
   colorClass: string;
   dotClass: string;
   pulse: boolean;
+}
+
+export interface SidebarThreadGroup {
+  parent: Thread;
+  children: SidebarSubagentEntry[];
+}
+
+export interface SidebarSubagentEntry {
+  id: string;
+  activityId: string;
+  title: string;
+  createdAt: string;
+  providerThreadId: string | null;
+  linkedThreadId: ThreadId | null;
+  linkedThread: Thread | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolveSidebarSubagentEntryTitle(input: {
+  thread: Thread | null;
+  payload: Record<string, unknown> | null;
+  summary: string;
+  description: string | undefined;
+}): string {
+  const threadTitle = input.thread ? formatSubagentDisplayTitle(input.thread.title) : null;
+  if (threadTitle) {
+    return threadTitle;
+  }
+  const payloadTitle = asTrimmedString(input.payload?.title);
+  if (payloadTitle) {
+    return formatSubagentDisplayTitle(payloadTitle);
+  }
+  if (input.description) {
+    return input.description;
+  }
+  return formatSubagentDisplayTitle(input.summary);
+}
+
+export function deriveSidebarThreadGroups(threads: Thread[]): SidebarThreadGroup[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const threadByProviderThreadId = new Map<string, Thread>();
+  for (const thread of threads) {
+    if (thread.codexThreadId) {
+      threadByProviderThreadId.set(thread.codexThreadId, thread);
+    }
+  }
+
+  const assignedChildThreadIds = new Set<ThreadId>();
+  const explicitChildrenByParentId = new Map<ThreadId, SidebarSubagentEntry[]>();
+  for (const thread of threads) {
+    const parentThreadId = thread.session?.parentThreadId;
+    if (!parentThreadId || parentThreadId === thread.id || !threadById.has(parentThreadId)) {
+      continue;
+    }
+    assignedChildThreadIds.add(thread.id);
+    const siblings = explicitChildrenByParentId.get(parentThreadId) ?? [];
+    siblings.push({
+      id: thread.id,
+      activityId: `linked-thread:${thread.id}`,
+      title: resolveSidebarSubagentEntryTitle({
+        thread,
+        payload: null,
+        summary: thread.title,
+        description: undefined,
+      }),
+      createdAt: thread.createdAt,
+      providerThreadId: thread.codexThreadId,
+      linkedThreadId: thread.id,
+      linkedThread: thread,
+    });
+    explicitChildrenByParentId.set(parentThreadId, siblings);
+  }
+
+  const groups = threads.map((thread) => {
+    const children = [...(explicitChildrenByParentId.get(thread.id) ?? [])].toSorted(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+    );
+    const seenLinkedThreadIds = new Set<ThreadId>(
+      children
+        .map((child) => child.linkedThreadId)
+        .filter((threadId): threadId is ThreadId => threadId !== null),
+    );
+    const latestTurnId = thread.latestTurn?.turnId ?? null;
+    const activities = latestTurnId
+      ? thread.activities.filter(
+          (activity) => activity.turnId === latestTurnId || activity.turnId === null,
+        )
+      : thread.activities;
+    const orderedActivities = [...activities].toSorted(
+      (left, right) =>
+        right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+    );
+
+    for (const activity of orderedActivities) {
+      const payload = asRecord(activity.payload);
+      if (payload?.itemType !== "collab_agent_tool_call") {
+        continue;
+      }
+      const subagent = extractSubagentMetadata(payload);
+      const providerThreadId = resolveSubagentProviderThreadId(subagent);
+      const linkedThread =
+        providerThreadId && threadByProviderThreadId.get(providerThreadId)?.id !== thread.id
+          ? (threadByProviderThreadId.get(providerThreadId) ?? null)
+          : null;
+      if (
+        !linkedThread ||
+        linkedThread.session?.parentThreadId === thread.id ||
+        seenLinkedThreadIds.has(linkedThread.id)
+      ) {
+        continue;
+      }
+      assignedChildThreadIds.add(linkedThread.id);
+      seenLinkedThreadIds.add(linkedThread.id);
+      children.push({
+        id: linkedThread.id,
+        activityId: activity.id,
+        title: resolveSidebarSubagentEntryTitle({
+          thread: linkedThread,
+          payload,
+          summary: activity.summary,
+          description: subagent?.description,
+        }),
+        createdAt: linkedThread.createdAt,
+        providerThreadId,
+        linkedThreadId: linkedThread.id,
+        linkedThread,
+      });
+    }
+
+    return { parent: thread, children };
+  });
+
+  return groups.filter((group) => !assignedChildThreadIds.has(group.parent.id));
+}
+
+export function flattenSidebarThreadGroupIds(
+  groups: ReadonlyArray<SidebarThreadGroup>,
+): ThreadId[] {
+  return groups.flatMap((group) => [
+    group.parent.id,
+    ...group.children
+      .map((child) => child.linkedThreadId)
+      .filter((threadId): threadId is ThreadId => threadId !== null),
+  ]);
+}
+
+export function formatSidebarSubagentTitle(title: string): string {
+  return formatSubagentDisplayTitle(title);
 }
 
 type ThreadStatusInput = Pick<

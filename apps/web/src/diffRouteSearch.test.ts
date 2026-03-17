@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import {
+  parseDiffRouteSearch,
+  stripDiffSearchParams,
+  stripSubagentSearchParams,
+} from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -68,6 +72,41 @@ describe("parseDiffRouteSearch", () => {
     });
 
     expect(parsed).toEqual({
+      diff: "1",
+    });
+  });
+
+  it("preserves delegated task focus outside diff-only parsing", () => {
+    const parsed = parseDiffRouteSearch({
+      subagentActivityId: " activity-1 ",
+    });
+
+    expect(parsed).toEqual({
+      subagentActivityId: "activity-1",
+    });
+  });
+});
+
+describe("search param stripping", () => {
+  it("removes diff params without clearing delegated task focus", () => {
+    expect(
+      stripDiffSearchParams({
+        diff: "1",
+        diffTurnId: "turn-1",
+        subagentActivityId: "activity-1",
+      }),
+    ).toEqual({
+      subagentActivityId: "activity-1",
+    });
+  });
+
+  it("removes delegated task focus without clearing diff params", () => {
+    expect(
+      stripSubagentSearchParams({
+        diff: "1",
+        subagentActivityId: "activity-1",
+      }),
+    ).toEqual({
       diff: "1",
     });
   });

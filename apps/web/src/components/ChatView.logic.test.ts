@@ -71,4 +71,56 @@ describe("deriveVisibleThreadWorkLogEntries", () => {
       "tool-2",
     ]);
   });
+
+  it("hides delegated subagent markers from the main thread work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-subagent",
+        kind: "tool.completed",
+        summary: "Delegated to reviewer",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          data: {
+            subagent: {
+              receiverThreadId: "provider-child-1",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "tool-command",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+        },
+      }),
+    ];
+
+    expect(deriveVisibleThreadWorkLogEntries(activities).map((entry) => entry.id)).toEqual([
+      "tool-command",
+    ]);
+  });
+
+  it("can focus a delegated subagent activity without mixing the full work log", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-parent",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Parent tool call",
+      }),
+      makeActivity({
+        id: "tool-subagent",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+      }),
+    ];
+
+    expect(
+      deriveVisibleThreadWorkLogEntries(activities, "tool-subagent").map((entry) => entry.id),
+    ).toEqual(["tool-subagent"]);
+  });
 });

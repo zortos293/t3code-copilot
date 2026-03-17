@@ -1,12 +1,40 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveSidebarThreadGroups,
+  flattenSidebarThreadGroupIds,
+  formatSidebarSubagentTitle,
   hasUnseenCompletion,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
 } from "./Sidebar.logic";
+import type { Thread } from "../types";
+
+function makeThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: (overrides.id ?? "thread-1") as never,
+    codexThreadId: null,
+    projectId: "project-1" as never,
+    title: "Thread",
+    model: "gpt-5-codex",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    proposedPlans: [],
+    error: null,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    latestTurn: null,
+    lastVisitedAt: undefined,
+    branch: null,
+    worktreePath: null,
+    turnDiffSummaries: [],
+    activities: [],
+    ...overrides,
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -80,6 +108,154 @@ describe("resolveSidebarNewThreadEnvMode", () => {
         defaultEnvMode: "worktree",
       }),
     ).toBe("local");
+  });
+});
+
+describe("deriveSidebarThreadGroups", () => {
+  it("nests subagent child threads under their parent thread", () => {
+    const parent = makeThread({
+      id: "thread-parent" as never,
+    });
+    const child = makeThread({
+      id: "thread-child" as never,
+      title: "Subagent task - Review the diff",
+      createdAt: "2026-03-09T10:00:02.000Z",
+      session: {
+        provider: "codex",
+        status: "running",
+        createdAt: "2026-03-09T10:00:02.000Z",
+        updatedAt: "2026-03-09T10:00:02.000Z",
+        orchestrationStatus: "running",
+        parentThreadId: "thread-parent" as never,
+      },
+    });
+    const other = makeThread({
+      id: "thread-other" as never,
+      title: "Standalone thread",
+      createdAt: "2026-03-09T10:00:03.000Z",
+    });
+
+    const groups = deriveSidebarThreadGroups([other, child, parent]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.parent.id).toBe("thread-other");
+    expect(groups[1]?.parent.id).toBe("thread-parent");
+    expect(groups[1]?.children.map((childEntry) => childEntry.linkedThreadId)).toEqual([
+      "thread-child",
+    ]);
+    expect(flattenSidebarThreadGroupIds(groups)).toEqual([
+      "thread-other",
+      "thread-parent",
+      "thread-child",
+    ]);
+  });
+
+  it("prefers the explicit parent thread id when provider linkage has not hydrated yet", () => {
+    const parent = makeThread({
+      id: "thread-parent-explicit" as never,
+      title: "Parent thread",
+    });
+    const child = makeThread({
+      id: "thread-child-explicit" as never,
+      title: "Subagent task - Inspect junk",
+      createdAt: "2026-03-09T10:00:02.000Z",
+      session: {
+        provider: "codex",
+        status: "ready",
+        createdAt: "2026-03-09T10:00:02.000Z",
+        updatedAt: "2026-03-09T10:00:02.000Z",
+        orchestrationStatus: "ready",
+        parentThreadId: "thread-parent-explicit" as never,
+      },
+    });
+
+    const groups = deriveSidebarThreadGroups([child, parent]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.parent.id).toBe("thread-parent-explicit");
+    expect(groups[0]?.children.map((entry) => entry.linkedThreadId)).toEqual([
+      "thread-child-explicit",
+    ]);
+  });
+
+  it("keeps subagent links when the delegated activity is attached outside the latest turn id", () => {
+    const parent = makeThread({
+      id: "thread-parent-latest" as never,
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        assistantMessageId: null,
+        requestedAt: "2026-03-09T10:00:00.000Z",
+        startedAt: "2026-03-09T10:00:00.000Z",
+        completedAt: null,
+      },
+      activities: [
+        {
+          id: "activity-latest-subagent" as never,
+          createdAt: "2026-03-09T10:00:01.000Z",
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "Delegated to reviewer",
+          payload: {
+            itemType: "collab_agent_tool_call",
+            data: {
+              subagent: {
+                receiverThreadId: "provider-child-latest",
+              },
+            },
+          },
+          turnId: null,
+        },
+      ],
+    });
+    const child = makeThread({
+      id: "thread-child-latest" as never,
+      codexThreadId: "provider-child-latest",
+      title: "Subagent task - Inspect junk",
+      createdAt: "2026-03-09T10:00:02.000Z",
+    });
+
+    const groups = deriveSidebarThreadGroups([child, parent]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.parent.id).toBe("thread-parent-latest");
+    expect(groups[0]?.children.map((entry) => entry.linkedThreadId)).toEqual([
+      "thread-child-latest",
+    ]);
+  });
+
+  it("does not synthesize empty subagent rows before a delegated thread materializes", () => {
+    const parent = makeThread({
+      id: "thread-parent" as never,
+      activities: [
+        {
+          id: "activity-1" as never,
+          createdAt: "2026-03-09T10:00:01.000Z",
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "Subagent task - Inspect Downloads",
+          payload: {
+            itemType: "collab_agent_tool_call",
+            data: {
+              subagent: {
+                description: "Inspect Downloads",
+              },
+            },
+          },
+          turnId: null,
+        },
+      ],
+    });
+
+    const groups = deriveSidebarThreadGroups([parent]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.children).toHaveLength(0);
+  });
+});
+
+describe("formatSidebarSubagentTitle", () => {
+  it("removes the default subagent task prefix for cleaner child rows", () => {
+    expect(formatSidebarSubagentTitle("Subagent task - Inspect Downloads")).toBe(
+      "Inspect Downloads",
+    );
   });
 });
 

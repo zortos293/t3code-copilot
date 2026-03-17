@@ -4,6 +4,7 @@ export interface DiffRouteSearch {
   diff?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
+  subagentActivityId?: string | undefined;
 }
 
 function isDiffOpenValue(value: unknown): boolean {
@@ -25,15 +26,24 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
   return rest as Omit<T, "diff" | "diffTurnId" | "diffFilePath">;
 }
 
+export function stripSubagentSearchParams<T extends Record<string, unknown>>(
+  params: T,
+): Omit<T, "subagentActivityId"> {
+  const { subagentActivityId: _subagentActivityId, ...rest } = params;
+  return rest as Omit<T, "subagentActivityId">;
+}
+
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {
   const diff = isDiffOpenValue(search.diff) ? "1" : undefined;
   const diffTurnIdRaw = diff ? normalizeSearchString(search.diffTurnId) : undefined;
   const diffTurnId = diffTurnIdRaw ? TurnId.makeUnsafe(diffTurnIdRaw) : undefined;
   const diffFilePath = diff && diffTurnId ? normalizeSearchString(search.diffFilePath) : undefined;
+  const subagentActivityId = normalizeSearchString(search.subagentActivityId);
 
   return {
     ...(diff ? { diff } : {}),
     ...(diffTurnId ? { diffTurnId } : {}),
     ...(diffFilePath ? { diffFilePath } : {}),
+    ...(subagentActivityId ? { subagentActivityId } : {}),
   };
 }

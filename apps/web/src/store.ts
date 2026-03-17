@@ -262,9 +262,10 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
+      const providerThreadId = thread.session?.providerThreadId ?? null;
       return {
         id: thread.id,
-        codexThreadId: null,
+        codexThreadId: providerThreadId ?? existing?.codexThreadId ?? null,
         projectId: thread.projectId,
         title: thread.title,
         model: resolveModelSlugForProvider(
@@ -282,6 +283,7 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
               status: toLegacySessionStatus(thread.session.status),
               orchestrationStatus: thread.session.status,
               activeTurnId: thread.session.activeTurnId ?? undefined,
+              parentThreadId: thread.session.parentThreadId ?? undefined,
               createdAt: thread.session.updatedAt,
               updatedAt: thread.session.updatedAt,
               ...(thread.session.lastError ? { lastError: thread.session.lastError } : {}),
