@@ -170,6 +170,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "@github/copilot-sdk@0.1.32": "patches/@github%2Fcopilot-sdk@0.1.32.patch",
+  },
   "overrides": {
     "vite": "^8.0.0",
   },
