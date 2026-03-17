@@ -4,9 +4,10 @@ import {
   type ProviderKind,
   type ThreadId,
 } from "@t3tools/contracts";
+import { getModelOptions } from "@t3tools/shared/model";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
-import { getAppModelOptions } from "../appSettings";
+import { getAppModelOptions, type BuiltInAppModelOption } from "../appSettings";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
 import { deriveWorkLogEntries, type WorkLogEntry } from "../session-logic";
@@ -130,6 +131,34 @@ export function getCustomModelOptionsByProvider(settings: {
     codex: getAppModelOptions("codex", settings.customCodexModels),
     copilot: getAppModelOptions("copilot", settings.customCopilotModels),
   };
+}
+
+export function orderCopilotBuiltInModelOptions(
+  runtimeOptions: ReadonlyArray<BuiltInAppModelOption>,
+  preferredOptions: ReadonlyArray<BuiltInAppModelOption> = getModelOptions("copilot"),
+): ReadonlyArray<BuiltInAppModelOption> {
+  const preferredIndexBySlug = new Map(
+    preferredOptions.map((option, index) => [option.slug, index] as const),
+  );
+
+  return runtimeOptions
+    .map((option, runtimeIndex) => ({ option, runtimeIndex }))
+    .toSorted((left, right) => {
+      const leftPreferredIndex = preferredIndexBySlug.get(left.option.slug);
+      const rightPreferredIndex = preferredIndexBySlug.get(right.option.slug);
+
+      if (leftPreferredIndex !== undefined && rightPreferredIndex !== undefined) {
+        return leftPreferredIndex - rightPreferredIndex;
+      }
+      if (leftPreferredIndex !== undefined) {
+        return -1;
+      }
+      if (rightPreferredIndex !== undefined) {
+        return 1;
+      }
+      return left.runtimeIndex - right.runtimeIndex;
+    })
+    .map(({ option }) => option);
 }
 
 export function resolveProviderHealthBannerProvider(input: {

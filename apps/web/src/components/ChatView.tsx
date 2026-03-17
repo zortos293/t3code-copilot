@@ -250,6 +250,7 @@ import {
 } from "./chat/MessagesTimeline.logic";
 import {
   deriveVisibleThreadWorkLogEntries,
+  orderCopilotBuiltInModelOptions,
   resolveProviderHealthBannerProvider,
 } from "./ChatView.logic";
 
@@ -1401,7 +1402,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       codex: getModelOptions("codex"),
       copilot:
         copilotProviderModels.length > 0
-          ? copilotProviderModels.map((model) => ({ slug: model.id, name: model.name }))
+          ? orderCopilotBuiltInModelOptions(
+              copilotProviderModels.map((model) => ({ slug: model.id, name: model.name })),
+            )
           : getModelOptions("copilot"),
     }),
     [copilotProviderModels],
