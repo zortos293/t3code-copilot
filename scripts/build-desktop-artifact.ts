@@ -188,12 +188,14 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
+  readonly packageManager?: string;
   readonly private: true;
   readonly description: string;
   readonly author: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
+  readonly patchedDependencies?: Record<string, string>;
   readonly devDependencies: {
     readonly electron: string;
   };
@@ -647,11 +649,22 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
+  const rootPatchedDependencies = rootPackageJson.patchedDependencies;
+  if (rootPatchedDependencies) {
+    for (const relativePatchPath of Object.values(rootPatchedDependencies)) {
+      const sourcePatchPath = path.join(repoRoot, relativePatchPath);
+      const targetPatchPath = path.join(stageAppDir, relativePatchPath);
+      yield* fs.makeDirectory(path.dirname(targetPatchPath), { recursive: true });
+      yield* fs.copyFile(sourcePatchPath, targetPatchPath);
+    }
+  }
+
   const stagePackageJson: StagePackageJson = {
     name: "t3-code-desktop",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
+    packageManager: rootPackageJson.packageManager,
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
@@ -667,6 +680,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...bundledCopilotPlatformDependencies,
       ...resolvedDesktopRuntimeDependencies,
     },
+    patchedDependencies: rootPatchedDependencies,
     devDependencies: {
       electron: electronVersion,
     },

@@ -49,6 +49,11 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import {
+  decideBackendRestart,
+  INITIAL_BACKEND_RESTART_STATE,
+  noteBackendLaunch,
+} from "./backendRestartPolicy";
 
 syncShellEnvironment();
 
@@ -89,7 +94,6 @@ let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
-let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
@@ -97,6 +101,7 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let backendRestartState = INITIAL_BACKEND_RESTART_STATE;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 let macDeveloperIdSigned: boolean | null = null;
@@ -1041,8 +1046,19 @@ function backendEnv(): NodeJS.ProcessEnv {
 function scheduleBackendRestart(reason: string): void {
   if (isQuitting || restartTimer) return;
 
-  const delayMs = Math.min(500 * 2 ** restartAttempt, 10_000);
-  restartAttempt += 1;
+  const decision = decideBackendRestart(backendRestartState, Date.now());
+  backendRestartState = decision.nextState;
+  if (decision.type === "fatal") {
+    handleFatalStartupError(
+      "backend",
+      new Error(
+        `The background server crashed ${decision.nextState.consecutiveFailures} times in a row within ${decision.uptimeMs}ms. Check ${Path.join(LOG_DIR, "server-child.log")} for details.`,
+      ),
+    );
+    return;
+  }
+
+  const delayMs = decision.delayMs;
   console.error(`[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`);
 
   restartTimer = setTimeout(() => {
@@ -1061,6 +1077,7 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
+  backendRestartState = noteBackendLaunch(backendRestartState, Date.now());
   const child = ChildProcess.spawn(process.execPath, [backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
@@ -1083,10 +1100,6 @@ function startBackend(): void {
     `pid=${child.pid ?? "unknown"} port=${backendPort} cwd=${resolveBackendCwd()}`,
   );
   captureBackendOutput(child);
-
-  child.once("spawn", () => {
-    restartAttempt = 0;
-  });
 
   child.on("error", (error) => {
     if (backendProcess === child) {
@@ -1115,6 +1128,8 @@ function stopBackend(): void {
     restartTimer = null;
   }
 
+  backendRestartState = INITIAL_BACKEND_RESTART_STATE;
+
   const child = backendProcess;
   backendProcess = null;
   if (!child) return;
@@ -1134,6 +1149,8 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
     clearTimeout(restartTimer);
     restartTimer = null;
   }
+
+  backendRestartState = INITIAL_BACKEND_RESTART_STATE;
 
   const child = backendProcess;
   backendProcess = null;
