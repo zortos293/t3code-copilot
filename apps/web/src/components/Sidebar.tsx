@@ -46,6 +46,7 @@ import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { newThreadId } from "../lib/utils";
+import { seedNewThreadDraft } from "../lib/newThreadDraft";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
@@ -264,6 +265,8 @@ export default function Sidebar() {
   const reorderProjects = useStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const draftByThreadId = useComposerDraftStore((store) => store.draftsByThreadId);
+  const stickyModel = useComposerDraftStore((store) => store.stickyModel);
+  const stickyModelOptions = useComposerDraftStore((store) => store.stickyModelOptions);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
@@ -274,6 +277,7 @@ export default function Sidebar() {
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const setDraftProvider = useComposerDraftStore((store) => store.setProvider);
   const setDraftModel = useComposerDraftStore((store) => store.setModel);
+  const setDraftModelOptions = useComposerDraftStore((store) => store.setModelOptions);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -404,31 +408,14 @@ export default function Sidebar() {
         model?: ModelSlug | null;
       },
     ): Promise<void> => {
-      const activeThread = routeThreadId
-        ? (threads.find((thread) => thread.id === routeThreadId) ?? null)
-        : null;
-      const activeDraftState = routeThreadId ? (draftByThreadId[routeThreadId] ?? null) : null;
-      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
-      const sourceProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
-      const shouldSeedFromActiveContext = sourceProjectId === projectId;
-      const nextProvider =
-        options?.provider !== undefined
-          ? (options.provider ?? null)
-          : shouldSeedFromActiveContext
-            ? (activeDraftState?.provider ?? activeThread?.session?.provider ?? null)
-            : null;
-      const nextModel =
-        options?.model !== undefined
-          ? (options.model ?? null)
-          : shouldSeedFromActiveContext
-            ? (activeDraftState?.model ?? activeThread?.model ?? null)
-            : null;
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
-      const hasProviderOption = nextProvider !== null;
-      const hasModelOption = nextModel !== null;
+      const activeDraftThread = routeThreadId ? (getDraftThread(routeThreadId) ?? null) : null;
       const storedDraftThread = getDraftThreadByProjectId(projectId);
+      const storedComposerDraft = storedDraftThread
+        ? (draftByThreadId[storedDraftThread.threadId] ?? null)
+        : null;
       if (storedDraftThread) {
         return (async () => {
           if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
@@ -438,12 +425,16 @@ export default function Sidebar() {
               ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
             });
           }
-          if (hasProviderOption) {
-            setDraftProvider(storedDraftThread.threadId, nextProvider);
-          }
-          if (hasModelOption) {
-            setDraftModel(storedDraftThread.threadId, nextModel, nextProvider);
-          }
+          seedNewThreadDraft({
+            threadId: storedDraftThread.threadId,
+            ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+            ...(options?.model !== undefined ? { model: options.model } : {}),
+            stickyModel: storedComposerDraft ? null : stickyModel,
+            stickyModelOptions: storedComposerDraft ? {} : stickyModelOptions,
+            setProvider: setDraftProvider,
+            setModel: setDraftModel,
+            setModelOptions: setDraftModelOptions,
+          });
           setProjectDraftThreadId(projectId, storedDraftThread.threadId);
           if (routeThreadId === storedDraftThread.threadId) {
             return;
@@ -464,12 +455,16 @@ export default function Sidebar() {
             ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
           });
         }
-        if (hasProviderOption) {
-          setDraftProvider(routeThreadId, nextProvider);
-        }
-        if (hasModelOption) {
-          setDraftModel(routeThreadId, nextModel, nextProvider);
-        }
+        seedNewThreadDraft({
+          threadId: routeThreadId,
+          ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+          ...(options?.model !== undefined ? { model: options.model } : {}),
+          stickyModel: draftByThreadId[routeThreadId] ? null : stickyModel,
+          stickyModelOptions: draftByThreadId[routeThreadId] ? {} : stickyModelOptions,
+          setProvider: setDraftProvider,
+          setModel: setDraftModel,
+          setModelOptions: setDraftModelOptions,
+        });
         setProjectDraftThreadId(projectId, routeThreadId);
         return Promise.resolve();
       }
@@ -483,12 +478,16 @@ export default function Sidebar() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
-        if (hasProviderOption) {
-          setDraftProvider(threadId, nextProvider);
-        }
-        if (hasModelOption) {
-          setDraftModel(threadId, nextModel, nextProvider);
-        }
+        seedNewThreadDraft({
+          threadId,
+          ...(options?.provider !== undefined ? { provider: options.provider } : {}),
+          ...(options?.model !== undefined ? { model: options.model } : {}),
+          stickyModel,
+          stickyModelOptions,
+          setProvider: setDraftProvider,
+          setModel: setDraftModel,
+          setModelOptions: setDraftModelOptions,
+        });
 
         await navigate({
           to: "/$threadId",
@@ -504,10 +503,12 @@ export default function Sidebar() {
       getDraftThread,
       routeThreadId,
       setDraftModel,
+      setDraftModelOptions,
       setDraftThreadContext,
       setDraftProvider,
       setProjectDraftThreadId,
-      threads,
+      stickyModel,
+      stickyModelOptions,
     ],
   );
 

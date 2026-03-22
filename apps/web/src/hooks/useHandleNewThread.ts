@@ -1,12 +1,12 @@
 import { DEFAULT_RUNTIME_MODE, type ProjectId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
-import { inferProviderForModel } from "@t3tools/shared/model";
 import {
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
+import { seedNewThreadDraft } from "../lib/newThreadDraft";
 import { newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 
@@ -102,13 +102,14 @@ export function useHandleNewThread() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
-        if (stickyModel) {
-          setProvider(threadId, inferProviderForModel(stickyModel));
-          setModel(threadId, stickyModel);
-        }
-        if (Object.keys(stickyModelOptions).length > 0) {
-          setModelOptions(threadId, stickyModelOptions);
-        }
+        seedNewThreadDraft({
+          threadId,
+          stickyModel,
+          stickyModelOptions,
+          setProvider,
+          setModel,
+          setModelOptions,
+        });
 
         await navigate({
           to: "/$threadId",
