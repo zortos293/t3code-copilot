@@ -1,4 +1,5 @@
 # T3 Code + Copilot
+## This repo will soon get an update that makes it upstream again
 
 This repo is a T3 Code fork that stays up to date with upstream and adds GitHub Copilot support.
 
