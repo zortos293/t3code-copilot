@@ -416,6 +416,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     } satisfies OrchestrationCommand;
   });
 
+  /** Standard security headers applied to every HTTP response. */
+  const SECURITY_HEADERS: Record<string, string> = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+  };
+
   // HTTP server — serves static files or redirects to Vite dev server
   const httpServer = http.createServer((req, res) => {
     const respond = (
@@ -423,7 +429,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       headers: Record<string, string>,
       body?: string | Uint8Array,
     ) => {
-      res.writeHead(statusCode, headers);
+      res.writeHead(statusCode, { ...SECURITY_HEADERS, ...headers });
       res.end(body);
     };
 
@@ -472,6 +478,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
           const contentType = Mime.getType(filePath) ?? "application/octet-stream";
           res.writeHead(200, {
+            ...SECURITY_HEADERS,
             "Content-Type": contentType,
             "Cache-Control": "public, max-age=31536000, immutable",
           });
@@ -960,10 +967,10 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       );
 
     const messageText = websocketRawToString(raw);
-    if (messageText === null) {
+    if (messageText === null || messageText.length > 10 * 1024 * 1024) {
       return yield* sendWsResponse({
         id: "unknown",
-        error: { message: "Invalid request format: Failed to read message" },
+        error: { message: messageText === null ? "Invalid request format: Failed to read message" : "Message too large" },
       });
     }
 
