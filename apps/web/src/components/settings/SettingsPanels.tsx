@@ -89,28 +89,49 @@ const TIMESTAMP_FORMAT_LABELS = {
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
-  binaryPlaceholder: string;
-  binaryDescription: ReactNode;
-  homePathKey?: "codexHomePath";
-  homePlaceholder?: string;
-  homeDescription?: ReactNode;
+  primaryPathKey: "binaryPath" | "cliPath";
+  primaryPathLabel: string;
+  primaryPathPlaceholder: string;
+  primaryPathDescription: ReactNode;
+  secondaryPathKey?: "homePath" | "configDir";
+  secondaryPathLabel?: string;
+  secondaryPathPlaceholder?: string;
+  secondaryPathDescription?: ReactNode;
 };
 
 const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
     provider: "codex",
     title: "Codex",
-    binaryPlaceholder: "Codex binary path",
-    binaryDescription: "Path to the Codex binary",
-    homePathKey: "codexHomePath",
-    homePlaceholder: "CODEX_HOME",
-    homeDescription: "Optional custom Codex home and config directory.",
+    primaryPathKey: "binaryPath",
+    primaryPathLabel: "Codex binary path",
+    primaryPathPlaceholder: "Codex binary path",
+    primaryPathDescription: "Path to the Codex binary",
+    secondaryPathKey: "homePath",
+    secondaryPathLabel: "CODEX_HOME path",
+    secondaryPathPlaceholder: "CODEX_HOME",
+    secondaryPathDescription: "Optional custom Codex home and config directory.",
+  },
+  {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    primaryPathKey: "cliPath",
+    primaryPathLabel: "Copilot CLI path",
+    primaryPathPlaceholder: "Copilot CLI path",
+    primaryPathDescription:
+      "Optional path to the GitHub Copilot CLI executable or bundled SDK loader.",
+    secondaryPathKey: "configDir",
+    secondaryPathLabel: "Copilot config directory",
+    secondaryPathPlaceholder: "~/.copilot",
+    secondaryPathDescription: "Optional custom Copilot config directory.",
   },
   {
     provider: "claudeAgent",
     title: "Claude",
-    binaryPlaceholder: "Claude binary path",
-    binaryDescription: "Path to the Claude binary",
+    primaryPathKey: "binaryPath",
+    primaryPathLabel: "Claude binary path",
+    primaryPathPlaceholder: "Claude binary path",
+    primaryPathDescription: "Path to the Claude binary",
   },
 ] as const;
 
@@ -532,6 +553,11 @@ export function GeneralSettingsPanel() {
       settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
       settings.providers.codex.customModels.length > 0,
     ),
+    copilot: Boolean(
+      settings.providers.copilot.cliPath !== DEFAULT_UNIFIED_SETTINGS.providers.copilot.cliPath ||
+      settings.providers.copilot.configDir !== DEFAULT_UNIFIED_SETTINGS.providers.copilot.configDir ||
+      settings.providers.copilot.customModels.length > 0,
+    ),
     claudeAgent: Boolean(
       settings.providers.claudeAgent.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
@@ -542,6 +568,7 @@ export function GeneralSettingsPanel() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    copilot: "",
     claudeAgent: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
@@ -569,7 +596,6 @@ export function GeneralSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
-  const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
     const exports: string[] = [];
@@ -753,12 +779,22 @@ export function GeneralSettingsPanel() {
     return {
       provider: providerSettings.provider,
       title: providerSettings.title,
-      binaryPlaceholder: providerSettings.binaryPlaceholder,
-      binaryDescription: providerSettings.binaryDescription,
-      homePathKey: providerSettings.homePathKey,
-      homePlaceholder: providerSettings.homePlaceholder,
-      homeDescription: providerSettings.homeDescription,
-      binaryPathValue: providerConfig.binaryPath,
+      primaryPathKey: providerSettings.primaryPathKey,
+      primaryPathLabel: providerSettings.primaryPathLabel,
+      primaryPathPlaceholder: providerSettings.primaryPathPlaceholder,
+      primaryPathDescription: providerSettings.primaryPathDescription,
+      secondaryPathKey: providerSettings.secondaryPathKey,
+      secondaryPathLabel: providerSettings.secondaryPathLabel,
+      secondaryPathPlaceholder: providerSettings.secondaryPathPlaceholder,
+      secondaryPathDescription: providerSettings.secondaryPathDescription,
+      primaryPathValue: String(
+        (providerConfig as Record<string, unknown>)[providerSettings.primaryPathKey] ?? "",
+      ),
+      secondaryPathValue: providerSettings.secondaryPathKey
+        ? String(
+            (providerConfig as Record<string, unknown>)[providerSettings.secondaryPathKey] ?? "",
+          )
+        : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -1211,62 +1247,62 @@ export function GeneralSettingsPanel() {
                         className="block"
                       >
                         <span className="text-xs font-medium text-foreground">
-                          {providerDisplayName} binary path
+                          {providerCard.primaryPathLabel}
                         </span>
                         <Input
                           id={`provider-install-${providerCard.provider}-binary-path`}
                           className="mt-1.5"
-                          value={providerCard.binaryPathValue}
+                          value={providerCard.primaryPathValue}
                           onChange={(event) =>
                             updateSettings({
                               providers: {
                                 ...settings.providers,
                                 [providerCard.provider]: {
                                   ...settings.providers[providerCard.provider],
-                                  binaryPath: event.target.value,
+                                  [providerCard.primaryPathKey]: event.target.value,
                                 },
                               },
                             })
                           }
-                          placeholder={providerCard.binaryPlaceholder}
+                          placeholder={providerCard.primaryPathPlaceholder}
                           spellCheck={false}
                         />
                         <span className="mt-1 block text-xs text-muted-foreground">
-                          {providerCard.binaryDescription}
+                          {providerCard.primaryPathDescription}
                         </span>
                       </label>
                     </div>
 
-                    {providerCard.homePathKey ? (
+                    {providerCard.secondaryPathKey ? (
                       <div className="border-t border-border/60 px-4 py-3 sm:px-5">
                         <label
-                          htmlFor={`provider-install-${providerCard.homePathKey}`}
+                          htmlFor={`provider-install-${providerCard.provider}-${providerCard.secondaryPathKey}`}
                           className="block"
                         >
                           <span className="text-xs font-medium text-foreground">
-                            CODEX_HOME path
+                            {providerCard.secondaryPathLabel}
                           </span>
                           <Input
-                            id={`provider-install-${providerCard.homePathKey}`}
+                            id={`provider-install-${providerCard.provider}-${providerCard.secondaryPathKey}`}
                             className="mt-1.5"
-                            value={codexHomePath}
+                            value={providerCard.secondaryPathValue}
                             onChange={(event) =>
                               updateSettings({
                                 providers: {
                                   ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
-                                    homePath: event.target.value,
+                                  [providerCard.provider]: {
+                                    ...settings.providers[providerCard.provider],
+                                    [providerCard.secondaryPathKey!]: event.target.value,
                                   },
                                 },
                               })
                             }
-                            placeholder={providerCard.homePlaceholder}
+                            placeholder={providerCard.secondaryPathPlaceholder}
                             spellCheck={false}
                           />
-                          {providerCard.homeDescription ? (
+                          {providerCard.secondaryPathDescription ? (
                             <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.homeDescription}
+                              {providerCard.secondaryPathDescription}
                             </span>
                           ) : null}
                         </label>

@@ -170,6 +170,28 @@ export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<s
     );
   }
 
+  if (typeof legacySettings.copilotCliPath === "string") {
+    patch.providers ??= {};
+    patch.providers.copilot ??= {};
+    patch.providers.copilot.cliPath = legacySettings.copilotCliPath;
+  }
+
+  if (typeof legacySettings.copilotConfigDir === "string") {
+    patch.providers ??= {};
+    patch.providers.copilot ??= {};
+    patch.providers.copilot.configDir = legacySettings.copilotConfigDir;
+  }
+
+  if (Array.isArray(legacySettings.customCopilotModels)) {
+    patch.providers ??= {};
+    patch.providers.copilot ??= {};
+    patch.providers.copilot.customModels = normalizeCustomModelSlugs(
+      legacySettings.customCopilotModels,
+      new Set<string>(),
+      "copilot",
+    );
+  }
+
   if (Predicate.isString(legacySettings.claudeBinaryPath)) {
     patch.providers ??= {};
     patch.providers.claudeAgent ??= {};

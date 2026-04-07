@@ -3,6 +3,7 @@ import {
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
+  type CopilotModelOptions,
   type CodexModelOptions,
   type ModelCapabilities,
   type ModelSelection,
@@ -96,6 +97,19 @@ export function normalizeCodexModelOptionsWithCapabilities(
       ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
       : {}),
     ...(fastMode !== undefined ? { fastMode } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeCopilotModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CopilotModelOptions | null | undefined,
+): CopilotModelOptions | undefined {
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
+  const nextOptions: CopilotModelOptions = {
+    ...(reasoningEffort
+      ? { reasoningEffort: reasoningEffort as CopilotModelOptions["reasoningEffort"] }
+      : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }

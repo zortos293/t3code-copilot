@@ -38,6 +38,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
   },
+  copilot: {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    description: "Save additional Copilot model slugs for the picker and `/model` command.",
+    placeholder: "your-copilot-model-slug",
+    example: "claude-sonnet-4.6",
+  },
   claudeAgent: {
     provider: "claudeAgent",
     title: "Claude",
@@ -158,6 +165,12 @@ export function getCustomModelOptionsByProvider(
       providers,
       "codex",
       selectedProvider === "codex" ? selectedModel : undefined,
+    ),
+    copilot: getAppModelOptions(
+      settings,
+      providers,
+      "copilot",
+      selectedProvider === "copilot" ? selectedModel : undefined,
     ),
     claudeAgent: getAppModelOptions(
       settings,
