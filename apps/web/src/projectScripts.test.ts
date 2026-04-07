@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
+import {
+  projectScriptCwd,
+  projectScriptRuntimeEnv,
+  setupProjectScript,
+} from "@t3tools/shared/projectScripts";
 
 import {
   commandForProjectScript,
   nextProjectScriptId,
   primaryProjectScript,
-  projectScriptRuntimeEnv,
   projectScriptIdFromCommand,
-  setupProjectScript,
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
@@ -69,5 +72,20 @@ describe("projectScripts helpers", () => {
     expect(env.T3CODE_PROJECT_ROOT).toBe("/custom-root");
     expect(env.CUSTOM_FLAG).toBe("1");
     expect(env.T3CODE_WORKTREE_PATH).toBeUndefined();
+  });
+
+  it("prefers the worktree path for script cwd resolution", () => {
+    expect(
+      projectScriptCwd({
+        project: { cwd: "/repo" },
+        worktreePath: "/repo/worktree-a",
+      }),
+    ).toBe("/repo/worktree-a");
+    expect(
+      projectScriptCwd({
+        project: { cwd: "/repo" },
+        worktreePath: null,
+      }),
+    ).toBe("/repo");
   });
 });

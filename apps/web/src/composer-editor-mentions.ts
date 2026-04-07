@@ -13,15 +13,11 @@ export type ComposerPromptSegment =
       path: string;
     }
   | {
-      type: "skill";
-      name: string;
-    }
-  | {
       type: "terminal-context";
       context: TerminalContextDraft | null;
     };
 
-const CHIP_TOKEN_REGEX = /(^|\s)(?:@([^\s@]+)|\$([a-zA-Z][a-zA-Z0-9_-]*))(?=\s|$)/g;
+const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
 
 function pushTextSegment(segments: ComposerPromptSegment[], text: string): void {
   if (!text) return;
@@ -40,28 +36,25 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
   }
 
   let cursor = 0;
-  for (const match of text.matchAll(CHIP_TOKEN_REGEX)) {
+  for (const match of text.matchAll(MENTION_TOKEN_REGEX)) {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
-    const mentionPath = match[2];
-    const skillName = match[3];
+    const path = match[2] ?? "";
     const matchIndex = match.index ?? 0;
-    const tokenStart = matchIndex + prefix.length;
-    const tokenEnd = tokenStart + fullMatch.length - prefix.length;
+    const mentionStart = matchIndex + prefix.length;
+    const mentionEnd = mentionStart + fullMatch.length - prefix.length;
 
-    if (tokenStart > cursor) {
-      pushTextSegment(segments, text.slice(cursor, tokenStart));
+    if (mentionStart > cursor) {
+      pushTextSegment(segments, text.slice(cursor, mentionStart));
     }
 
-    if (mentionPath && mentionPath.length > 0) {
-      segments.push({ type: "mention", path: mentionPath });
-    } else if (skillName && skillName.length > 0) {
-      segments.push({ type: "skill", name: skillName });
+    if (path.length > 0) {
+      segments.push({ type: "mention", path });
     } else {
-      pushTextSegment(segments, text.slice(tokenStart, tokenEnd));
+      pushTextSegment(segments, text.slice(mentionStart, mentionEnd));
     }
 
-    cursor = tokenEnd;
+    cursor = mentionEnd;
   }
 
   if (cursor < text.length) {

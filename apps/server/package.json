@@ -1,38 +1,36 @@
 {
   "name": "t3",
-  "version": "0.1.25",
+  "version": "0.0.15",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zortos293/t3code-copilot",
+    "url": "https://github.com/pingdotgg/t3code",
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/index.mjs"
+    "t3": "./dist/bin.mjs"
   },
   "files": [
     "dist"
   ],
   "type": "module",
   "scripts": {
-    "dev": "bun run src/index.ts",
+    "dev": "bun run src/bin.ts",
     "build": "node scripts/cli.ts build",
-    "start": "node dist/index.mjs",
-    "prepare": "node ../../scripts/run-effect-language-service-patch.mjs",
+    "start": "node dist/bin.mjs",
+    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.77",
+    "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
-    "@github/copilot": "1.0.7",
-    "@github/copilot-sdk": "0.1.32",
     "@pierre/diffs": "^1.1.0-beta.16",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
-    "open": "^10.1.0",
-    "smol-toml": "^1.6.0",
-    "ws": "^8.18.0"
+    "open": "^10.1.0"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
@@ -42,7 +40,6 @@
     "@t3tools/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
-    "@types/ws": "^8.5.13",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

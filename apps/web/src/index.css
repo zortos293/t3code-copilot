@@ -11,7 +11,6 @@
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-ring-plan: var(--ring-plan);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -90,7 +89,6 @@
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
-  --ring-plan: var(--color-amber-500);
 
   @variant dark {
     color-scheme: dark;
@@ -119,7 +117,6 @@
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
-    --ring-plan: var(--color-amber-500);
   }
 }
 

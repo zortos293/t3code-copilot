@@ -11,7 +11,7 @@ describe("estimateTimelineMessageHeight", () => {
         role: "assistant",
         text: "a".repeat(144),
       }),
-    ).toBe(122);
+    ).toBe(86.5);
   });
 
   it("uses assistant sizing rules for system messages", () => {
@@ -20,7 +20,7 @@ describe("estimateTimelineMessageHeight", () => {
         role: "system",
         text: "a".repeat(144),
       }),
-    ).toBe(122);
+    ).toBe(86.5);
   });
 
   it("adds one attachment row for one or two user attachments", () => {
@@ -30,7 +30,7 @@ describe("estimateTimelineMessageHeight", () => {
         text: "hello",
         attachments: [{ id: "1" }],
       }),
-    ).toBe(346);
+    ).toBe(234);
 
     expect(
       estimateTimelineMessageHeight({
@@ -38,7 +38,7 @@ describe("estimateTimelineMessageHeight", () => {
         text: "hello",
         attachments: [{ id: "1" }, { id: "2" }],
       }),
-    ).toBe(346);
+    ).toBe(234);
   });
 
   it("adds a second attachment row for three or four user attachments", () => {
@@ -48,7 +48,7 @@ describe("estimateTimelineMessageHeight", () => {
         text: "hello",
         attachments: [{ id: "1" }, { id: "2" }, { id: "3" }],
       }),
-    ).toBe(574);
+    ).toBe(350);
 
     expect(
       estimateTimelineMessageHeight({
@@ -56,7 +56,7 @@ describe("estimateTimelineMessageHeight", () => {
         text: "hello",
         attachments: [{ id: "1" }, { id: "2" }, { id: "3" }, { id: "4" }],
       }),
-    ).toBe(574);
+    ).toBe(350);
   });
 
   it("does not cap long user message estimates", () => {
@@ -132,7 +132,7 @@ describe("estimateTimelineMessageHeight", () => {
       text: "a".repeat(200),
     };
 
-    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(188);
-    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(122);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 320 })).toBe(154.75);
+    expect(estimateTimelineMessageHeight(message, { timelineWidthPx: 768 })).toBe(86.5);
   });
 });

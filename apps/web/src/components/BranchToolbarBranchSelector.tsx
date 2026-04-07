@@ -1,5 +1,5 @@
 import type { GitBranch } from "@t3tools/contracts";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDownIcon } from "lucide-react";
 import {
@@ -14,20 +14,16 @@ import {
   useTransition,
 } from "react";
 
-import {
-  gitBranchesQueryOptions,
-  gitQueryKeys,
-  gitStatusQueryOptions,
-  invalidateGitQueries,
-} from "../lib/gitReactQuery";
+import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
+import { useGitStatus } from "../lib/gitStatusState";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
-  dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
   EnvMode,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
+  shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
 import {
@@ -37,6 +33,7 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
+  ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
 import { toastManager } from "./ui/toast";
@@ -88,11 +85,32 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchesQuery = useQuery(gitBranchesQueryOptions(branchCwd));
-  const branchStatusQuery = useQuery(gitStatusQueryOptions(branchCwd));
+  const branchStatusQuery = useGitStatus(branchCwd);
+  const trimmedBranchQuery = branchQuery.trim();
+  const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
+
+  useEffect(() => {
+    if (!branchCwd) return;
+    void queryClient.prefetchInfiniteQuery(
+      gitBranchSearchInfiniteQueryOptions({ cwd: branchCwd, query: "" }),
+    );
+  }, [branchCwd, queryClient]);
+
+  const {
+    data: branchesSearchData,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isPending: isBranchesSearchPending,
+  } = useInfiniteQuery(
+    gitBranchSearchInfiniteQueryOptions({
+      cwd: branchCwd,
+      query: deferredTrimmedBranchQuery,
+    }),
+  );
   const branches = useMemo(
-    () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []),
-    [branchesQuery.data?.branches],
+    () => branchesSearchData?.pages.flatMap((page) => page.branches) ?? [],
+    [branchesSearchData?.pages],
   );
   const currentGitBranch =
     branchStatusQuery.data?.branch ?? branches.find((branch) => branch.current)?.name ?? null;
@@ -107,8 +125,6 @@ export function BranchToolbarBranchSelector({
     () => new Map(branches.map((branch) => [branch.name, branch] as const)),
     [branches],
   );
-  const trimmedBranchQuery = branchQuery.trim();
-  const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
@@ -134,11 +150,20 @@ export function BranchToolbarBranchSelector({
     () =>
       normalizedDeferredBranchQuery.length === 0
         ? branchPickerItems
-        : branchPickerItems.filter((itemValue) => {
-            if (createBranchItemValue && itemValue === createBranchItemValue) return true;
-            return itemValue.toLowerCase().includes(normalizedDeferredBranchQuery);
-          }),
-    [branchPickerItems, createBranchItemValue, normalizedDeferredBranchQuery],
+        : branchPickerItems.filter((itemValue) =>
+            shouldIncludeBranchPickerItem({
+              itemValue,
+              normalizedQuery: normalizedDeferredBranchQuery,
+              createBranchItemValue,
+              checkoutPullRequestItemValue,
+            }),
+          ),
+    [
+      branchPickerItems,
+      checkoutPullRequestItemValue,
+      createBranchItemValue,
+      normalizedDeferredBranchQuery,
+    ],
   );
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,
@@ -146,11 +171,21 @@ export function BranchToolbarBranchSelector({
   );
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
+  const totalBranchCount = branchesSearchData?.pages[0]?.totalCount ?? 0;
+  const branchStatusText = isBranchesSearchPending
+    ? "Loading branches..."
+    : isFetchingNextPage
+      ? "Loading more branches..."
+      : hasNextPage
+        ? `Showing ${branches.length} of ${totalBranchCount} branches`
+        : null;
 
   const runBranchAction = (action: () => Promise<void>) => {
     startBranchActionTransition(async () => {
       await action().catch(() => undefined);
-      await invalidateGitQueries(queryClient).catch(() => undefined);
+      await queryClient
+        .invalidateQueries({ queryKey: gitQueryKeys.branches(branchCwd) })
+        .catch(() => undefined);
     });
   };
 
@@ -188,29 +223,26 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
+      const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       try {
-        await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
-        await invalidateGitQueries(queryClient);
+        const checkoutResult = await api.git.checkout({
+          cwd: selectionTarget.checkoutCwd,
+          branch: branch.name,
+        });
+        const nextBranchName = branch.isRemote
+          ? (checkoutResult.branch ?? selectedBranchName)
+          : selectedBranchName;
+        setOptimisticBranch(nextBranchName);
+        onSetThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
       } catch (error) {
+        setOptimisticBranch(previousBranch);
         toastManager.add({
           type: "error",
           title: "Failed to checkout branch.",
           description: toBranchActionErrorMessage(error),
         });
-        return;
       }
-
-      let nextBranchName = selectedBranchName;
-      if (branch.isRemote) {
-        const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
-        if (status?.branch) {
-          nextBranchName = status.branch;
-        }
-      }
-
-      setOptimisticBranch(nextBranchName);
-      onSetThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
     });
   };
 
@@ -223,32 +255,24 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
+      const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
-
       try {
-        await api.git.createBranch({ cwd: branchCwd, branch: name });
-        try {
-          await api.git.checkout({ cwd: branchCwd, branch: name });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to checkout branch.",
-            description: toBranchActionErrorMessage(error),
-          });
-          return;
-        }
+        const createBranchResult = await api.git.createBranch({
+          cwd: branchCwd,
+          branch: name,
+          checkout: true,
+        });
+        setOptimisticBranch(createBranchResult.branch);
+        onSetThreadBranch(createBranchResult.branch, activeWorktreePath);
       } catch (error) {
+        setOptimisticBranch(previousBranch);
         toastManager.add({
           type: "error",
-          title: "Failed to create branch.",
+          title: "Failed to create and checkout branch.",
           description: toBranchActionErrorMessage(error),
         });
-        return;
       }
-
-      setOptimisticBranch(name);
-      onSetThreadBranch(name, activeWorktreePath);
-      setBranchQuery("");
     });
   };
 
@@ -285,6 +309,24 @@ export function BranchToolbarBranchSelector({
   );
 
   const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);
+  const maybeFetchNextBranchPage = useCallback(() => {
+    if (!isBranchMenuOpen || !hasNextPage || isFetchingNextPage) {
+      return;
+    }
+
+    const scrollElement = branchListScrollElementRef.current;
+    if (!scrollElement) {
+      return;
+    }
+
+    const distanceFromBottom =
+      scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
+    if (distanceFromBottom > 96) {
+      return;
+    }
+
+    void fetchNextPage().catch(() => undefined);
+  }, [fetchNextPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
   const branchListVirtualizer = useVirtualizer({
     count: filteredBranchPickerItems.length,
     estimateSize: (index) =>
@@ -320,6 +362,35 @@ export function BranchToolbarBranchSelector({
     isBranchMenuOpen,
     shouldVirtualizeBranchList,
   ]);
+
+  useEffect(() => {
+    if (!isBranchMenuOpen) {
+      return;
+    }
+
+    branchListScrollElementRef.current?.scrollTo({ top: 0 });
+  }, [deferredTrimmedBranchQuery, isBranchMenuOpen]);
+
+  useEffect(() => {
+    const scrollElement = branchListScrollElementRef.current;
+    if (!scrollElement || !isBranchMenuOpen) {
+      return;
+    }
+
+    const handleScroll = () => {
+      maybeFetchNextBranchPage();
+    };
+
+    scrollElement.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => {
+      scrollElement.removeEventListener("scroll", handleScroll);
+    };
+  }, [isBranchMenuOpen, maybeFetchNextBranchPage]);
+
+  useEffect(() => {
+    maybeFetchNextBranchPage();
+  }, [branches.length, maybeFetchNextBranchPage]);
 
   const triggerLabel = getBranchTriggerLabel({
     activeWorktreePath,
@@ -387,7 +458,6 @@ export function BranchToolbarBranchSelector({
         key={itemValue}
         index={index}
         value={itemValue}
-        className={itemValue === resolvedActiveBranch ? "bg-accent text-foreground" : undefined}
         style={style}
         onClick={() => selectBranch(branch)}
       >
@@ -416,7 +486,7 @@ export function BranchToolbarBranchSelector({
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
         className="text-muted-foreground/70 hover:text-foreground/80"
-        disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
+        disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
       >
         <span className="max-w-[240px] truncate">{triggerLabel}</span>
         <ChevronDownIcon />
@@ -459,6 +529,7 @@ export function BranchToolbarBranchSelector({
             filteredBranchPickerItems.map((itemValue, index) => renderPickerItem(itemValue, index))
           )}
         </ComboboxList>
+        {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
       </ComboboxPopup>
     </Combobox>
   );

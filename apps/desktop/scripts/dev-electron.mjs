@@ -1,27 +1,29 @@
 import { spawn, spawnSync } from "node:child_process";
 import { watch } from "node:fs";
 import { join } from "node:path";
-import waitOn from "wait-on";
 
 import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
+import { waitForResources } from "./wait-for-resources.mjs";
 
 const port = Number(process.env.ELECTRON_RENDERER_PORT ?? 5733);
 const devServerUrl = `http://localhost:${port}`;
 const requiredFiles = [
   "dist-electron/main.js",
   "dist-electron/preload.js",
-  "../server/dist/index.mjs",
+  "../server/dist/bin.mjs",
 ];
 const watchedDirectories = [
   { directory: "dist-electron", files: new Set(["main.js", "preload.js"]) },
-  { directory: "../server/dist", files: new Set(["index.mjs"]) },
+  { directory: "../server/dist", files: new Set(["bin.mjs"]) },
 ];
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
 
-await waitOn({
-  resources: [`tcp:${port}`, ...requiredFiles.map((filePath) => `file:${filePath}`)],
+await waitForResources({
+  baseDir: desktopDir,
+  files: requiredFiles,
+  tcpPort: port,
 });
 
 const childEnv = { ...process.env };

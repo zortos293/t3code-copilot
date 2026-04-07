@@ -1,5 +1,6 @@
 import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import { ThreadId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
@@ -12,6 +13,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../src/provider/Services/ProviderService.ts";
+import { ServerSettingsService } from "../src/serverSettings.ts";
 import { AnalyticsService } from "../src/telemetry/Services/AnalyticsService.ts";
 import { SqlitePersistenceMemory } from "../src/persistence/Layers/Sqlite.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "../src/persistence/Layers/ProviderSessionRuntime.ts";
@@ -60,6 +62,7 @@ const makeIntegrationFixture = Effect.gen(function* () {
   const shared = Layer.mergeAll(
     directoryLayer,
     Layer.succeed(ProviderAdapterRegistry, registry),
+    ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS),
     AnalyticsService.layerTest,
   ).pipe(Layer.provide(SqlitePersistenceMemory));
 
@@ -83,6 +86,7 @@ const collectEventsDuring = <A, E, R>(
       Effect.forkScoped,
     );
 
+    yield* Effect.sleep("50 millis");
     yield* action;
 
     return yield* Effect.forEach(
@@ -101,7 +105,6 @@ const runTurn = (input: {
 }) =>
   Effect.gen(function* () {
     yield* input.harness.queueTurnResponse(input.threadId, input.response);
-
     return yield* collectEventsDuring(
       input.provider.streamEvents,
       input.response.events.length,
@@ -113,7 +116,7 @@ const runTurn = (input: {
     );
   });
 
-it.effect("replays typed runtime fixture events", () =>
+it.live("replays typed runtime fixture events", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
 
@@ -146,7 +149,7 @@ it.effect("replays typed runtime fixture events", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("replays file-changing fixture turn events", () =>
+it.live("replays file-changing fixture turn events", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -185,7 +188,7 @@ it.effect("replays file-changing fixture turn events", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("runs multi-turn tool/approval flow", () =>
+it.live("runs multi-turn tool/approval flow", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;
@@ -239,7 +242,7 @@ it.effect("runs multi-turn tool/approval flow", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("rolls back provider conversation state only", () =>
+it.live("rolls back provider conversation state only", () =>
   Effect.gen(function* () {
     const fixture = yield* makeIntegrationFixture;
     const { join } = yield* Path.Path;

@@ -10,7 +10,6 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
-import { DEFAULT_GITHUB_REPOSITORY, parseGitHubRepository } from "@t3tools/shared/githubRepository";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -75,6 +74,8 @@ interface BuildCliInput {
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
   readonly verbose: Option.Option<boolean>;
+  readonly mockUpdates: Option.Option<boolean>;
+  readonly mockUpdateServerPort: Option.Option<string>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -163,24 +164,8 @@ interface ResolvedBuildOptions {
   readonly keepStage: boolean;
   readonly signed: boolean;
   readonly verbose: boolean;
-}
-
-function resolveBundledCopilotPlatformPackages(
-  platform: typeof BuildPlatform.Type,
-  arch: typeof BuildArch.Type,
-): ReadonlyArray<string> {
-  if (platform === "mac") {
-    if (arch === "universal") {
-      return ["@github/copilot-darwin-arm64", "@github/copilot-darwin-x64"];
-    }
-    return [arch === "arm64" ? "@github/copilot-darwin-arm64" : "@github/copilot-darwin-x64"];
-  }
-
-  if (platform === "linux") {
-    return [arch === "arm64" ? "@github/copilot-linux-arm64" : "@github/copilot-linux-x64"];
-  }
-
-  return [arch === "arm64" ? "@github/copilot-win32-arm64" : "@github/copilot-win32-x64"];
+  readonly mockUpdates: boolean;
+  readonly mockUpdateServerPort: string | undefined;
 }
 
 interface StagePackageJson {
@@ -188,14 +173,12 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
-  readonly packageManager?: string;
   readonly private: true;
   readonly description: string;
   readonly author: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
-  readonly patchedDependencies?: Record<string, string>;
   readonly devDependencies: {
     readonly electron: string;
   };
@@ -225,6 +208,8 @@ const BuildEnvConfig = Config.all({
   keepStage: Config.boolean("T3CODE_DESKTOP_KEEP_STAGE").pipe(Config.withDefault(false)),
   signed: Config.boolean("T3CODE_DESKTOP_SIGNED").pipe(Config.withDefault(false)),
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
+  mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
+  mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -252,12 +237,25 @@ const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: B
   const target = mergeOptions(input.target, env.target, PLATFORM_CONFIG[platform].defaultTarget);
   const arch = mergeOptions(input.arch, env.arch, getDefaultArch(platform));
   const version = mergeOptions(input.buildVersion, env.version, undefined);
-  const outputDir = path.resolve(repoRoot, mergeOptions(input.outputDir, env.outputDir, "release"));
+  const releaseDir = resolveBooleanFlag(input.mockUpdates, env.mockUpdates)
+    ? "release-mock"
+    : "release";
+  const outputDir = path.resolve(
+    repoRoot,
+    mergeOptions(input.outputDir, env.outputDir, releaseDir),
+  );
 
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
   const signed = resolveBooleanFlag(input.signed, env.signed);
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
+
+  const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
+  const mockUpdateServerPort = mergeOptions(
+    input.mockUpdateServerPort,
+    env.mockUpdateServerPort,
+    undefined,
+  );
 
   return {
     platform,
@@ -269,6 +267,8 @@ const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (input: B
     keepStage,
     signed,
     verbose,
+    mockUpdates,
+    mockUpdateServerPort,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -446,17 +446,19 @@ function resolveGitHubPublishConfig():
       readonly releaseType: "release";
     }
   | undefined {
-  const repository = parseGitHubRepository(
+  const rawRepo =
     process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
-      process.env.GITHUB_REPOSITORY?.trim() ||
-      DEFAULT_GITHUB_REPOSITORY,
-  );
-  if (!repository) return undefined;
+    process.env.GITHUB_REPOSITORY?.trim() ||
+    "";
+  if (!rawRepo) return undefined;
+
+  const [owner, repo, ...rest] = rawRepo.split("/");
+  if (!owner || !repo || rest.length > 0) return undefined;
 
   return {
     provider: "github",
-    owner: repository.owner,
-    repo: repository.repo,
+    owner,
+    repo,
     releaseType: "release",
   };
 }
@@ -466,12 +468,13 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   target: string,
   productName: string,
   signed: boolean,
+  mockUpdates: boolean,
+  mockUpdateServerPort: string | undefined,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: "com.t3tools.t3code",
     productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
-    asarUnpack: ["node_modules/@github/copilot*/**/*"],
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -479,6 +482,13 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const publishConfig = resolveGitHubPublishConfig();
   if (publishConfig) {
     buildConfig.publish = [publishConfig];
+  } else if (mockUpdates) {
+    buildConfig.publish = [
+      {
+        provider: "generic",
+        url: `http://localhost:${mockUpdateServerPort ?? 3000}`,
+      },
+    ];
   }
 
   if (platform === "mac") {
@@ -492,8 +502,14 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
+      executableName: "t3code",
       icon: "icon.png",
       category: "Development",
+      desktop: {
+        entry: {
+          StartupWMClass: "t3code",
+        },
+      },
     };
   }
 
@@ -579,18 +595,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         cause,
       }),
   });
-  const bundledCopilotVersion = serverDependencies["@github/copilot"];
-  if (typeof bundledCopilotVersion !== "string" || bundledCopilotVersion.trim().length === 0) {
-    return yield* new BuildScriptError({
-      message: "Could not resolve bundled @github/copilot version from apps/server/package.json.",
-    });
-  }
-  const bundledCopilotPlatformDependencies = Object.fromEntries(
-    resolveBundledCopilotPlatformPackages(options.platform, options.arch).map((dependencyName) => [
-      dependencyName,
-      bundledCopilotVersion,
-    ]),
-  );
 
   const appVersion = options.version ?? serverPackageJson.version;
   const commitHash = resolveGitCommitHash(repoRoot);
@@ -649,22 +653,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
-  const rootPatchedDependencies = rootPackageJson.patchedDependencies;
-  if (rootPatchedDependencies) {
-    for (const relativePatchPath of Object.values(rootPatchedDependencies)) {
-      const sourcePatchPath = path.join(repoRoot, relativePatchPath);
-      const targetPatchPath = path.join(stageAppDir, relativePatchPath);
-      yield* fs.makeDirectory(path.dirname(targetPatchPath), { recursive: true });
-      yield* fs.copyFile(sourcePatchPath, targetPatchPath);
-    }
-  }
-
   const stagePackageJson: StagePackageJson = {
-    name: "t3-code-desktop",
+    name: "t3code",
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
-    packageManager: rootPackageJson.packageManager,
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
@@ -674,13 +667,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.target,
       desktopPackageJson.productName ?? "T3 Code",
       options.signed,
+      options.mockUpdates,
+      options.mockUpdateServerPort,
     ),
     dependencies: {
       ...resolvedServerDependencies,
-      ...bundledCopilotPlatformDependencies,
       ...resolvedDesktopRuntimeDependencies,
     },
-    patchedDependencies: rootPatchedDependencies,
     devDependencies: {
       electron: electronVersion,
     },
@@ -812,6 +805,14 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   verbose: Flag.boolean("verbose").pipe(
     Flag.withDescription("Stream subprocess stdout (env: T3CODE_DESKTOP_VERBOSE)."),
+    Flag.optional,
+  ),
+  mockUpdates: Flag.boolean("mock-updates").pipe(
+    Flag.withDescription("Enable mock updates (env: T3CODE_DESKTOP_MOCK_UPDATES)."),
+    Flag.optional,
+  ),
+  mockUpdateServerPort: Flag.string("mock-update-server-port").pipe(
+    Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
 }).pipe(

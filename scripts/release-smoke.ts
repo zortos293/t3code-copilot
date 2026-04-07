@@ -17,7 +17,6 @@ const workspaceFiles = [
   "packages/shared/package.json",
   "scripts/package.json",
 ] as const;
-const workspaceDirectories = ["patches"] as const;
 
 function copyWorkspaceManifestFixture(targetRoot: string): void {
   for (const relativePath of workspaceFiles) {
@@ -25,12 +24,6 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
     cpSync(sourcePath, destinationPath);
-  }
-
-  for (const relativePath of workspaceDirectories) {
-    const sourcePath = resolve(repoRoot, relativePath);
-    const destinationPath = resolve(targetRoot, relativePath);
-    cpSync(sourcePath, destinationPath, { recursive: true });
   }
 }
 

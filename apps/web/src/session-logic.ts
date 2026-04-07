@@ -28,7 +28,6 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
-  { value: "copilot", label: "GitHub Copilot", available: true },
   { value: "claudeAgent", label: "Claude", available: true },
   { value: "cursor", label: "Cursor", available: false },
 ];
@@ -38,14 +37,11 @@ export interface WorkLogEntry {
   createdAt: string;
   label: string;
   detail?: string;
-  output?: string;
   command?: string;
-  exitCode?: number;
+  rawCommand?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
-  activityKind: OrchestrationThreadActivity["kind"];
   toolTitle?: string;
-  toolStatus?: "inProgress" | "completed" | "failed" | "declined";
   itemType?: ToolLifecycleItemType;
   requestKind?: PendingApproval["requestKind"];
 }
@@ -283,6 +279,7 @@ function parseUserInputQuestions(
         header: question.header,
         question: question.question,
         options,
+        multiSelect: question.multiSelect === true,
       };
     })
     .filter((question): question is UserInputQuestion => question !== null);
@@ -462,20 +459,19 @@ export function hasActionableProposedPlan(
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
-  sinceCreatedAt?: string,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   const entries = ordered
-    .filter((activity) =>
-      latestTurnId ? activity.turnId === latestTurnId || activity.turnId === null : true,
-    )
-    .filter((activity) => (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true))
+    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
+    .filter((activity) => activity.kind !== "context-window.updated")
     .filter((activity) => activity.summary !== "Checkpoint captured")
     .filter((activity) => !isPlanBoundaryToolActivity(activity))
     .map(toDerivedWorkLogEntry);
-  return collapseDerivedWorkLogEntries(entries);
+  return collapseDerivedWorkLogEntries(entries).map(
+    ({ activityKind: _activityKind, collapseKey: _collapseKey, ...entry }) => entry,
+  );
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {
@@ -495,11 +491,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
-  const command = extractToolCommand(payload);
+  const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
-  const toolStatus = extractToolStatus(payload);
-  const { output, exitCode } = extractToolOutputEnvelope(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -515,17 +509,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.detail = detail;
     }
   }
-  if (output) {
-    entry.output = output;
+  if (commandPreview.command) {
+    entry.command = commandPreview.command;
   }
-  if (typeof exitCode === "number") {
-    entry.exitCode = exitCode;
-  }
-  if (toolStatus) {
-    entry.toolStatus = toolStatus;
-  }
-  if (command) {
-    entry.command = command;
+  if (commandPreview.rawCommand) {
+    entry.rawCommand = commandPreview.rawCommand;
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
@@ -584,6 +572,7 @@ function mergeDerivedWorkLogEntries(
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
+  const rawCommand = next.rawCommand ?? previous.rawCommand;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -593,6 +582,7 @@ function mergeDerivedWorkLogEntries(
     ...next,
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
+    ...(rawCommand ? { rawCommand } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
@@ -653,7 +643,121 @@ function asTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeCommandValue(value: unknown): string | null {
+function trimMatchingOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    const unquoted = trimmed.slice(1, -1).trim();
+    return unquoted.length > 0 ? unquoted : trimmed;
+  }
+  return trimmed;
+}
+
+function executableBasename(value: string): string | null {
+  const trimmed = trimMatchingOuterQuotes(value);
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const normalized = trimmed.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  const last = segments.at(-1)?.trim() ?? "";
+  return last.length > 0 ? last.toLowerCase() : null;
+}
+
+function splitExecutableAndRest(value: string): { executable: string; rest: string } | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+    const quote = trimmed.charAt(0);
+    const closeIndex = trimmed.indexOf(quote, 1);
+    if (closeIndex <= 0) {
+      return null;
+    }
+    return {
+      executable: trimmed.slice(0, closeIndex + 1),
+      rest: trimmed.slice(closeIndex + 1).trim(),
+    };
+  }
+
+  const firstWhitespace = trimmed.search(/\s/);
+  if (firstWhitespace < 0) {
+    return {
+      executable: trimmed,
+      rest: "",
+    };
+  }
+
+  return {
+    executable: trimmed.slice(0, firstWhitespace),
+    rest: trimmed.slice(firstWhitespace).trim(),
+  };
+}
+
+const SHELL_WRAPPER_SPECS = [
+  {
+    executables: ["pwsh", "pwsh.exe", "powershell", "powershell.exe"],
+    wrapperFlagPattern: /(?:^|\s)-command\s+/i,
+  },
+  {
+    executables: ["cmd", "cmd.exe"],
+    wrapperFlagPattern: /(?:^|\s)\/c\s+/i,
+  },
+  {
+    executables: ["bash", "sh", "zsh"],
+    wrapperFlagPattern: /(?:^|\s)-(?:l)?c\s+/i,
+  },
+] as const;
+
+function findShellWrapperSpec(shell: string) {
+  return SHELL_WRAPPER_SPECS.find((spec) =>
+    (spec.executables as ReadonlyArray<string>).includes(shell),
+  );
+}
+
+function unwrapCommandRemainder(value: string, wrapperFlagPattern: RegExp): string | null {
+  const match = wrapperFlagPattern.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const command = value.slice(match.index + match[0].length).trim();
+  if (command.length === 0) {
+    return null;
+  }
+
+  const unwrapped = trimMatchingOuterQuotes(command);
+  return unwrapped.length > 0 ? unwrapped : null;
+}
+
+function unwrapKnownShellCommandWrapper(value: string): string {
+  const split = splitExecutableAndRest(value);
+  if (!split || split.rest.length === 0) {
+    return value;
+  }
+
+  const shell = executableBasename(split.executable);
+  if (!shell) {
+    return value;
+  }
+
+  const spec = findShellWrapperSpec(shell);
+  if (!spec) {
+    return value;
+  }
+
+  return unwrapCommandRemainder(split.rest, spec.wrapperFlagPattern) ?? value;
+}
+
+function formatCommandArrayPart(value: string): string {
+  return /[\s"'`]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+}
+
+function formatCommandValue(value: unknown): string | null {
   const direct = asTrimmedString(value);
   if (direct) {
     return direct;
@@ -664,61 +768,62 @@ function normalizeCommandValue(value: unknown): string | null {
   const parts = value
     .map((entry) => asTrimmedString(entry))
     .filter((entry): entry is string => entry !== null);
-  return parts.length > 0 ? parts.join(" ") : null;
+  if (parts.length === 0) {
+    return null;
+  }
+  return parts.map((part) => formatCommandArrayPart(part)).join(" ");
 }
 
-function extractToolCommand(payload: Record<string, unknown> | null): string | null {
+function normalizeCommandValue(value: unknown): string | null {
+  const formatted = formatCommandValue(value);
+  return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
+}
+
+function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
+  const formatted = formatCommandValue(value);
+  if (!formatted || normalizedCommand === null) {
+    return null;
+  }
+  return formatted === normalizedCommand ? null : formatted;
+}
+
+function extractToolCommand(payload: Record<string, unknown> | null): {
+  command: string | null;
+  rawCommand: string | null;
+} {
   const data = asRecord(payload?.data);
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const itemInput = asRecord(item?.input);
-  const candidates = [
-    normalizeCommandValue(item?.command),
-    normalizeCommandValue(itemInput?.command),
-    normalizeCommandValue(itemResult?.command),
-    normalizeCommandValue(data?.command),
+  const itemType = asTrimmedString(payload?.itemType);
+  const detail = asTrimmedString(payload?.detail);
+  const candidates: unknown[] = [
+    item?.command,
+    itemInput?.command,
+    itemResult?.command,
+    data?.command,
+    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
   ];
-  return candidates.find((candidate) => candidate !== null) ?? null;
+
+  for (const candidate of candidates) {
+    const command = normalizeCommandValue(candidate);
+    if (!command) {
+      continue;
+    }
+    return {
+      command,
+      rawCommand: toRawToolCommand(candidate, command),
+    };
+  }
+
+  return {
+    command: null,
+    rawCommand: null,
+  };
 }
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
-}
-
-function extractToolStatus(
-  payload: Record<string, unknown> | null,
-): WorkLogEntry["toolStatus"] | undefined {
-  switch (payload?.status) {
-    case "in_progress":
-      return "inProgress";
-    case "inProgress":
-    case "completed":
-    case "failed":
-    case "declined":
-      return payload.status;
-    default:
-      return undefined;
-  }
-}
-
-function asInteger(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) ? value : null;
-}
-
-function extractToolExitCode(payload: Record<string, unknown> | null): number | null {
-  const data = asRecord(payload?.data);
-  const item = asRecord(data?.item);
-  const itemResult = asRecord(item?.result);
-  const dataResult = asRecord(data?.result);
-  const candidates = [
-    asInteger(itemResult?.exitCode),
-    asInteger(itemResult?.exit_code),
-    asInteger(dataResult?.exitCode),
-    asInteger(dataResult?.exit_code),
-    asInteger(data?.exitCode),
-    asInteger(data?.exit_code),
-  ];
-  return candidates.find((candidate) => candidate !== null) ?? null;
 }
 
 function stripTrailingExitCode(value: string): {
@@ -739,35 +844,6 @@ function stripTrailingExitCode(value: string): {
   return {
     output: normalizedOutput.length > 0 ? normalizedOutput : null,
     ...(Number.isInteger(exitCode) ? { exitCode } : {}),
-  };
-}
-
-function extractToolOutputEnvelope(payload: Record<string, unknown> | null): {
-  output?: string | undefined;
-  exitCode?: number | undefined;
-} {
-  const data = asRecord(payload?.data);
-  const item = asRecord(data?.item);
-  const itemResult = asRecord(item?.result);
-  const dataResult = asRecord(data?.result);
-  const outputCandidates = [
-    asTrimmedString(itemResult?.content),
-    asTrimmedString(dataResult?.content),
-    asTrimmedString(data?.output),
-    asTrimmedString(data?.stdout),
-    asTrimmedString(data?.stderr),
-    asTrimmedString(payload?.detail),
-  ];
-  const rawOutput = outputCandidates.find((candidate) => candidate !== null) ?? null;
-  if (!rawOutput) {
-    const exitCode = extractToolExitCode(payload);
-    return exitCode === null ? {} : { exitCode };
-  }
-  const normalizedOutput = stripTrailingExitCode(rawOutput);
-  const exitCode = extractToolExitCode(payload) ?? normalizedOutput.exitCode;
-  return {
-    ...(normalizedOutput.output ? { output: normalizedOutput.output } : {}),
-    ...(exitCode !== undefined ? { exitCode } : {}),
   };
 }
 
@@ -906,16 +982,6 @@ export function hasToolActivityForTurn(
   return activities.some((activity) => activity.turnId === turnId && activity.tone === "tool");
 }
 
-export function hasToolActivitySince(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-  sinceCreatedAt: string | undefined,
-): boolean {
-  return activities.some(
-    (activity) =>
-      activity.tone === "tool" && (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true),
-  );
-}
-
 export function deriveTimelineEntries(
   messages: ChatMessage[],
   proposedPlans: ProposedPlan[],
@@ -942,6 +1008,53 @@ export function deriveTimelineEntries(
   return [...messageRows, ...proposedPlanRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
   );
+}
+
+export function deriveCompletionDividerBeforeEntryId(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  latestTurn: Pick<
+    OrchestrationLatestTurn,
+    "assistantMessageId" | "startedAt" | "completedAt"
+  > | null,
+): string | null {
+  if (!latestTurn?.startedAt || !latestTurn.completedAt) {
+    return null;
+  }
+
+  if (latestTurn.assistantMessageId) {
+    const exactMatch = timelineEntries.find(
+      (timelineEntry) =>
+        timelineEntry.kind === "message" &&
+        timelineEntry.message.role === "assistant" &&
+        timelineEntry.message.id === latestTurn.assistantMessageId,
+    );
+    if (exactMatch) {
+      return exactMatch.id;
+    }
+  }
+
+  const turnStartedAt = Date.parse(latestTurn.startedAt);
+  const turnCompletedAt = Date.parse(latestTurn.completedAt);
+  if (Number.isNaN(turnStartedAt) || Number.isNaN(turnCompletedAt)) {
+    return null;
+  }
+
+  let inRangeMatch: string | null = null;
+  let fallbackMatch: string | null = null;
+  for (const timelineEntry of timelineEntries) {
+    if (timelineEntry.kind !== "message" || timelineEntry.message.role !== "assistant") {
+      continue;
+    }
+    const messageAt = Date.parse(timelineEntry.message.createdAt);
+    if (Number.isNaN(messageAt) || messageAt < turnStartedAt) {
+      continue;
+    }
+    fallbackMatch = timelineEntry.id;
+    if (messageAt <= turnCompletedAt) {
+      inRangeMatch = timelineEntry.id;
+    }
+  }
+  return inRangeMatch ?? fallbackMatch;
 }
 
 export function inferCheckpointTurnCountByTurnId(

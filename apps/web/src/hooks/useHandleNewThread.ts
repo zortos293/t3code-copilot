@@ -1,32 +1,37 @@
 import { DEFAULT_RUNTIME_MODE, type ProjectId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { seedNewThreadDraft } from "../lib/newThreadDraft";
 import { newThreadId } from "../lib/utils";
+import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import { useStore } from "../store";
+import { useThreadById } from "../storeSelectors";
+import { useUiStateStore } from "../uiStateStore";
 
 export function useHandleNewThread() {
-  const projects = useStore((store) => store.projects);
-  const threads = useStore((store) => store.threads);
-  const stickyModel = useComposerDraftStore((store) => store.stickyModel);
-  const stickyModelOptions = useComposerDraftStore((store) => store.stickyModelOptions);
+  const projectIds = useStore(useShallow((store) => store.projects.map((project) => project.id)));
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
   const navigate = useNavigate();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
+  const activeThread = useThreadById(routeThreadId);
   const activeDraftThread = useComposerDraftStore((store) =>
     routeThreadId ? (store.draftThreadsByThreadId[routeThreadId] ?? null) : null,
   );
-
-  const activeThread = routeThreadId
-    ? threads.find((thread) => thread.id === routeThreadId)
-    : undefined;
+  const orderedProjects = useMemo(() => {
+    return orderItemsByPreferredIds({
+      items: projectIds,
+      preferredIds: projectOrder,
+      getId: (projectId) => projectId,
+    });
+  }, [projectIds, projectOrder]);
 
   const handleNewThread = useCallback(
     (
@@ -41,9 +46,7 @@ export function useHandleNewThread() {
         clearProjectDraftThreadId,
         getDraftThread,
         getDraftThreadByProjectId,
-        setModel,
-        setModelOptions,
-        setProvider,
+        applyStickyState,
         setDraftThreadContext,
         setProjectDraftThreadId,
       } = useComposerDraftStore.getState();
@@ -102,14 +105,7 @@ export function useHandleNewThread() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
-        seedNewThreadDraft({
-          threadId,
-          stickyModel,
-          stickyModelOptions,
-          setProvider,
-          setModel,
-          setModelOptions,
-        });
+        applyStickyState(threadId);
 
         await navigate({
           to: "/$threadId",
@@ -117,14 +113,14 @@ export function useHandleNewThread() {
         });
       })();
     },
-    [navigate, routeThreadId, stickyModel, stickyModelOptions],
+    [navigate, routeThreadId],
   );
 
   return {
     activeDraftThread,
     activeThread,
+    defaultProjectId: orderedProjects[0] ?? null,
     handleNewThread,
-    projects,
     routeThreadId,
   };
 }

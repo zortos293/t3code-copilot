@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import type {
   DesktopTheme,
   DesktopUpdateActionResult,
+  DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
@@ -27,13 +28,8 @@ import { autoUpdater } from "electron-updater";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { showDesktopConfirmDialog } from "./confirmDialog";
-import { hasDeveloperIdApplicationAuthority } from "./macCodeSigning";
-import {
-  buildMacManualUpdateInstallScript,
-  findFirstAppBundlePath,
-  resolveDownloadedMacUpdateZipPath,
-} from "./macUpdateInstaller";
 import { syncShellEnvironment } from "./syncShellEnvironment";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
@@ -49,11 +45,6 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
-import {
-  decideBackendRestart,
-  INITIAL_BACKEND_RESTART_STATE,
-  noteBackendLaunch,
-} from "./backendRestartPolicy";
 
 syncShellEnvironment();
 
@@ -67,6 +58,8 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const UPDATE_CHECK_CHANNEL = "desktop:update-check";
+const GET_WS_URL_CHANNEL = "desktop:get-ws-url";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -74,6 +67,8 @@ const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const APP_USER_MODEL_ID = "com.t3tools.t3code";
+const LINUX_DESKTOP_ENTRY_NAME = isDevelopment ? "t3code-dev.desktop" : "t3code.desktop";
+const LINUX_WM_CLASS = isDevelopment ? "t3code-dev" : "t3code";
 const USER_DATA_DIR_NAME = isDevelopment ? "t3code-dev" : "t3code";
 const LEGACY_USER_DATA_DIR_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
@@ -82,18 +77,23 @@ const LOG_DIR = Path.join(STATE_DIR, "logs");
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
+const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
+type LinuxDesktopNamedApp = Electron.App & {
+  setDesktopName?: (desktopName: string) => void;
+};
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
 let backendWsUrl = "";
+let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let desktopProtocolRegistered = false;
@@ -101,11 +101,10 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
-let backendRestartState = INITIAL_BACKEND_RESTART_STATE;
+let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
-let macDeveloperIdSigned: boolean | null = null;
-let downloadedUpdateFiles: string[] = [];
+const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   platform: process.platform,
   processArch: process.arch,
@@ -126,46 +125,30 @@ function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function resolveMacAppBundlePath(): string | null {
-  if (process.platform !== "darwin" || !app.isPackaged) {
-    return null;
+function readPersistedBackendObservabilitySettings(): {
+  readonly otlpTracesUrl: string | undefined;
+  readonly otlpMetricsUrl: string | undefined;
+} {
+  try {
+    if (!FS.existsSync(SERVER_SETTINGS_PATH)) {
+      return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+    }
+    return parsePersistedServerObservabilitySettings(FS.readFileSync(SERVER_SETTINGS_PATH, "utf8"));
+  } catch (error) {
+    console.warn("[desktop] failed to read persisted backend observability settings", error);
+    return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
   }
-
-  return Path.resolve(process.execPath, "..", "..", "..");
 }
 
-function isMacDeveloperIdSignedBuild(): boolean {
-  if (process.platform !== "darwin" || !app.isPackaged) {
-    return false;
-  }
-  if (macDeveloperIdSigned !== null) {
-    return macDeveloperIdSigned;
-  }
-
-  const appBundlePath = resolveMacAppBundlePath();
-  if (!appBundlePath) {
-    macDeveloperIdSigned = false;
-    return macDeveloperIdSigned;
-  }
-
-  const result = ChildProcess.spawnSync("codesign", ["--display", "--verbose=4", appBundlePath], {
-    encoding: "utf8",
-  });
-  const details = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
-  macDeveloperIdSigned = result.status === 0 && hasDeveloperIdApplicationAuthority(details);
-
-  if (!macDeveloperIdSigned) {
-    const diagnostic =
-      result.error?.message ||
-      (result.status === 0
-        ? "missing Developer ID Application authority in code signature"
-        : details || `codesign exited with status ${result.status ?? "unknown"}`);
-    console.info(
-      `[desktop-updater] macOS code-signing check indicates manual install fallback will be used: ${sanitizeLogValue(diagnostic)}`,
-    );
-  }
-
-  return macDeveloperIdSigned;
+function backendChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.T3CODE_PORT;
+  delete env.T3CODE_AUTH_TOKEN;
+  delete env.T3CODE_MODE;
+  delete env.T3CODE_NO_BROWSER;
+  delete env.T3CODE_HOST;
+  delete env.T3CODE_DESKTOP_WS_URL;
+  return env;
 }
 
 function writeDesktopLogHeader(message: string): void {
@@ -186,14 +169,6 @@ function formatErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
-}
-
-function setDownloadedUpdateFiles(files: ReadonlyArray<string>): void {
-  downloadedUpdateFiles = [...files];
-}
-
-function clearDownloadedUpdateFiles(): void {
-  downloadedUpdateFiles = [];
 }
 
 function getSafeExternalUrl(rawUrl: unknown): string | null {
@@ -312,6 +287,10 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 
 initializePackagedLogging();
 
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("class", LINUX_WM_CLASS);
+}
+
 function getDestructiveMenuIcon(): Electron.NativeImage | undefined {
   if (process.platform !== "darwin") return undefined;
   if (destructiveMenuIconCache !== undefined) {
@@ -338,10 +317,12 @@ let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 let updateStartupTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
+let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
+  if (updateInstallInFlight) return "install";
   if (updateDownloadInFlight) return "download";
   if (updateCheckInFlight) return "check";
   return updateState.errorContext;
@@ -437,7 +418,7 @@ function resolveAboutCommitHash(): string | null {
 }
 
 function resolveBackendEntry(): string {
-  return Path.join(resolveAppRoot(), "apps/server/dist/index.mjs");
+  return Path.join(resolveAppRoot(), "apps/server/dist/bin.mjs");
 }
 
 function resolveBackendCwd(): string {
@@ -576,7 +557,13 @@ function dispatchMenuAction(action: string): void {
 }
 
 function handleCheckForUpdatesMenuClick(): void {
-  const disabledReason = resolveAutoUpdateDisabledReason();
+  const disabledReason = getAutoUpdateDisabledReason({
+    isDevelopment,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    appImage: process.env.APPIMAGE,
+    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+  });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
     void dialog.showMessageBox({
@@ -756,6 +743,10 @@ function configureAppIdentity(): void {
     app.setAppUserModelId(APP_USER_MODEL_ID);
   }
 
+  if (process.platform === "linux") {
+    (app as LinuxDesktopNamedApp).setDesktopName?.(LINUX_DESKTOP_ENTRY_NAME);
+  }
+
   if (process.platform === "darwin" && app.dock) {
     const iconPath = resolveIconPath("png");
     if (iconPath) {
@@ -787,23 +778,25 @@ function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   emitUpdateState();
 }
 
-function resolveAutoUpdateDisabledReason(): string | null {
-  return getAutoUpdateDisabledReason({
-    isDevelopment,
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-    appImage: process.env.APPIMAGE,
-    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
-  });
+function shouldEnableAutoUpdates(): boolean {
+  return (
+    getAutoUpdateDisabledReason({
+      isDevelopment,
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      appImage: process.env.APPIMAGE,
+      disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+    }) === null
+  );
 }
 
-async function checkForUpdates(reason: string): Promise<void> {
-  if (isQuitting || !updaterConfigured || updateCheckInFlight) return;
+async function checkForUpdates(reason: string): Promise<boolean> {
+  if (isQuitting || !updaterConfigured || updateCheckInFlight) return false;
   if (updateState.status === "downloading" || updateState.status === "downloaded") {
     console.info(
       `[desktop-updater] Skipping update check (${reason}) while status=${updateState.status}.`,
     );
-    return;
+    return false;
   }
   updateCheckInFlight = true;
   setUpdateState(reduceDesktopUpdateStateOnCheckStart(updateState, new Date().toISOString()));
@@ -811,12 +804,14 @@ async function checkForUpdates(reason: string): Promise<void> {
 
   try {
     await autoUpdater.checkForUpdates();
+    return true;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     setUpdateState(
       reduceDesktopUpdateStateOnCheckFailure(updateState, message, new Date().toISOString()),
     );
     console.error(`[desktop-updater] Failed to check for updates: ${message}`);
+    return true;
   } finally {
     updateCheckInFlight = false;
   }
@@ -832,12 +827,10 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
   console.info("[desktop-updater] Downloading update...");
 
   try {
-    const downloadedFiles = await autoUpdater.downloadUpdate();
-    setDownloadedUpdateFiles(downloadedFiles);
+    await autoUpdater.downloadUpdate();
     return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    clearDownloadedUpdateFiles();
     setUpdateState(reduceDesktopUpdateStateOnDownloadFailure(updateState, message));
     console.error(`[desktop-updater] Failed to download update: ${message}`);
     return { accepted: true, completed: false };
@@ -846,72 +839,28 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
   }
 }
 
-function installDownloadedUnsignedMacUpdate(): void {
-  const currentAppPath = resolveMacAppBundlePath();
-  if (!currentAppPath) {
-    throw new Error("Could not resolve the current app bundle path.");
-  }
-
-  const downloadedZipPath = resolveDownloadedMacUpdateZipPath(downloadedUpdateFiles);
-  if (!downloadedZipPath) {
-    throw new Error("Could not locate the downloaded macOS update archive.");
-  }
-
-  const stagingDir = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3-mac-update-"));
-  const extractedDir = Path.join(stagingDir, "extracted");
-  FS.mkdirSync(extractedDir, { recursive: true });
-
-  const unzipResult = ChildProcess.spawnSync(
-    "ditto",
-    ["-x", "-k", downloadedZipPath, extractedDir],
-    {
-      encoding: "utf8",
-    },
-  );
-  if (unzipResult.status !== 0) {
-    const details = `${unzipResult.stdout ?? ""}\n${unzipResult.stderr ?? ""}`.trim();
-    throw new Error(details || `ditto exited with status ${unzipResult.status ?? "unknown"}`);
-  }
-
-  const extractedAppPath = findFirstAppBundlePath(extractedDir);
-  if (!extractedAppPath) {
-    throw new Error("Could not find the extracted app bundle inside the downloaded update.");
-  }
-
-  const installerScriptPath = Path.join(stagingDir, "install-update.sh");
-  const installerScript = buildMacManualUpdateInstallScript({
-    appPid: process.pid,
-    sourceAppPath: extractedAppPath,
-    targetAppPath: currentAppPath,
-    stagingDir,
-  });
-  FS.writeFileSync(installerScriptPath, installerScript, { mode: 0o700 });
-
-  const installerProcess = ChildProcess.spawn("/bin/sh", [installerScriptPath], {
-    detached: true,
-    stdio: "ignore",
-  });
-  installerProcess.unref();
-}
-
 async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
   if (isQuitting || !updaterConfigured || updateState.status !== "downloaded") {
     return { accepted: false, completed: false };
   }
 
   isQuitting = true;
+  updateInstallInFlight = true;
   clearUpdatePollTimer();
   try {
     await stopBackendAndWaitForExit();
-    if (process.platform === "darwin" && !isMacDeveloperIdSignedBuild()) {
-      installDownloadedUnsignedMacUpdate();
-      app.quit();
-    } else {
-      autoUpdater.quitAndInstall();
+    // Destroy all windows before launching the NSIS installer to avoid the installer finding live windows it needs to close.
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.destroy();
     }
-    return { accepted: true, completed: true };
+    // `quitAndInstall()` only starts the handoff to the updater. The actual
+    // install may still fail asynchronously, so keep the action incomplete
+    // until we either quit or receive an updater error.
+    autoUpdater.quitAndInstall(true, true);
+    return { accepted: true, completed: false };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
+    updateInstallInFlight = false;
     isQuitting = false;
     setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
     console.error(`[desktop-updater] Failed to install update: ${message}`);
@@ -920,15 +869,13 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 }
 
 function configureAutoUpdater(): void {
-  const disabledReason = resolveAutoUpdateDisabledReason();
-  const enabled = disabledReason === null;
+  const enabled = shouldEnableAutoUpdates();
   setUpdateState({
     ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
     enabled,
     status: enabled ? "idle" : "disabled",
   });
   if (!enabled) {
-    console.info(`[desktop-updater] Automatic updates disabled: ${disabledReason}`);
     return;
   }
   updaterConfigured = true;
@@ -950,6 +897,13 @@ function configureAutoUpdater(): void {
     }
   }
 
+  if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
+    autoUpdater.setFeedURL({
+      provider: "generic",
+      url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
+    });
+  }
+
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   // Keep alpha branding, but force all installs onto the stable update track.
@@ -969,7 +923,6 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
-    clearDownloadedUpdateFiles();
     setUpdateState(
       reduceDesktopUpdateStateOnUpdateAvailable(
         updateState,
@@ -981,13 +934,19 @@ function configureAutoUpdater(): void {
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });
   autoUpdater.on("update-not-available", () => {
-    clearDownloadedUpdateFiles();
     setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
     lastLoggedDownloadMilestone = -1;
     console.info("[desktop-updater] No updates available.");
   });
   autoUpdater.on("error", (error) => {
     const message = formatErrorMessage(error);
+    if (updateInstallInFlight) {
+      updateInstallInFlight = false;
+      isQuitting = false;
+      setUpdateState(reduceDesktopUpdateStateOnInstallFailure(updateState, message));
+      console.error(`[desktop-updater] Updater error: ${message}`);
+      return;
+    }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
@@ -1032,33 +991,11 @@ function configureAutoUpdater(): void {
   }, AUTO_UPDATE_POLL_INTERVAL_MS);
   updatePollTimer.unref();
 }
-function backendEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    T3CODE_MODE: "desktop",
-    T3CODE_NO_BROWSER: "1",
-    T3CODE_PORT: String(backendPort),
-    T3CODE_HOME: BASE_DIR,
-    T3CODE_AUTH_TOKEN: backendAuthToken,
-  };
-}
-
 function scheduleBackendRestart(reason: string): void {
   if (isQuitting || restartTimer) return;
 
-  const decision = decideBackendRestart(backendRestartState, Date.now());
-  backendRestartState = decision.nextState;
-  if (decision.type === "fatal") {
-    handleFatalStartupError(
-      "backend",
-      new Error(
-        `The background server crashed ${decision.nextState.consecutiveFailures} times in a row within ${decision.uptimeMs}ms. Check ${Path.join(LOG_DIR, "server-child.log")} for details.`,
-      ),
-    );
-    return;
-  }
-
-  const delayMs = decision.delayMs;
+  const delayMs = Math.min(500 * 2 ** restartAttempt, 10_000);
+  restartAttempt += 1;
   console.error(`[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`);
 
   restartTimer = setTimeout(() => {
@@ -1070,6 +1007,7 @@ function scheduleBackendRestart(reason: string): void {
 function startBackend(): void {
   if (isQuitting || backendProcess) return;
 
+  backendObservabilitySettings = readPersistedBackendObservabilitySettings();
   const backendEntry = resolveBackendEntry();
   if (!FS.existsSync(backendEntry)) {
     scheduleBackendRestart(`missing server entry at ${backendEntry}`);
@@ -1077,17 +1015,41 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  backendRestartState = noteBackendLaunch(backendRestartState, Date.now());
-  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
+  const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
     env: {
-      ...backendEnv(),
+      ...backendChildEnv(),
       ELECTRON_RUN_AS_NODE: "1",
     },
-    stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
+    stdio: captureBackendLogs
+      ? ["ignore", "pipe", "pipe", "pipe"]
+      : ["ignore", "inherit", "inherit", "pipe"],
   });
+  const bootstrapStream = child.stdio[3];
+  if (bootstrapStream && "write" in bootstrapStream) {
+    bootstrapStream.write(
+      `${JSON.stringify({
+        mode: "desktop",
+        noBrowser: true,
+        port: backendPort,
+        t3Home: BASE_DIR,
+        authToken: backendAuthToken,
+        ...(backendObservabilitySettings.otlpTracesUrl
+          ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
+          : {}),
+        ...(backendObservabilitySettings.otlpMetricsUrl
+          ? { otlpMetricsUrl: backendObservabilitySettings.otlpMetricsUrl }
+          : {}),
+      })}\n`,
+    );
+    bootstrapStream.end();
+  } else {
+    child.kill("SIGTERM");
+    scheduleBackendRestart("missing desktop bootstrap pipe");
+    return;
+  }
   backendProcess = child;
   let backendSessionClosed = false;
   const closeBackendSession = (details: string) => {
@@ -1101,22 +1063,31 @@ function startBackend(): void {
   );
   captureBackendOutput(child);
 
+  child.once("spawn", () => {
+    restartAttempt = 0;
+  });
+
   child.on("error", (error) => {
+    const wasExpected = expectedBackendExitChildren.has(child);
     if (backendProcess === child) {
       backendProcess = null;
     }
     closeBackendSession(`pid=${child.pid ?? "unknown"} error=${error.message}`);
+    if (wasExpected) {
+      return;
+    }
     scheduleBackendRestart(error.message);
   });
 
   child.on("exit", (code, signal) => {
+    const wasExpected = expectedBackendExitChildren.has(child);
     if (backendProcess === child) {
       backendProcess = null;
     }
     closeBackendSession(
       `pid=${child.pid ?? "unknown"} code=${code ?? "null"} signal=${signal ?? "null"}`,
     );
-    if (isQuitting) return;
+    if (isQuitting || wasExpected) return;
     const reason = `code=${code ?? "null"} signal=${signal ?? "null"}`;
     scheduleBackendRestart(reason);
   });
@@ -1128,13 +1099,12 @@ function stopBackend(): void {
     restartTimer = null;
   }
 
-  backendRestartState = INITIAL_BACKEND_RESTART_STATE;
-
   const child = backendProcess;
   backendProcess = null;
   if (!child) return;
 
   if (child.exitCode === null && child.signalCode === null) {
+    expectedBackendExitChildren.add(child);
     child.kill("SIGTERM");
     setTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) {
@@ -1150,13 +1120,12 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
     restartTimer = null;
   }
 
-  backendRestartState = INITIAL_BACKEND_RESTART_STATE;
-
   const child = backendProcess;
   backendProcess = null;
   if (!child) return;
   const backendChild = child;
   if (backendChild.exitCode !== null || backendChild.signalCode !== null) return;
+  expectedBackendExitChildren.add(backendChild);
 
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -1198,6 +1167,11 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeAllListeners(GET_WS_URL_CHANNEL);
+  ipcMain.on(GET_WS_URL_CHANNEL, (event) => {
+    event.returnValue = backendWsUrl;
+  });
+
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -1242,6 +1216,7 @@ function registerIpcHandlers(): void {
           id: item.id,
           label: item.label,
           destructive: item.destructive === true,
+          disabled: item.disabled === true,
         }));
       if (normalizedItems.length === 0) {
         return null;
@@ -1272,6 +1247,7 @@ function registerIpcHandlers(): void {
           }
           const itemOption: MenuItemConstructorOptions = {
             label: item.label,
+            enabled: !item.disabled,
             click: () => resolve(item.id),
           };
           if (item.destructive) {
@@ -1336,6 +1312,21 @@ function registerIpcHandlers(): void {
       completed: result.completed,
       state: updateState,
     } satisfies DesktopUpdateActionResult;
+  });
+
+  ipcMain.removeHandler(UPDATE_CHECK_CHANNEL);
+  ipcMain.handle(UPDATE_CHECK_CHANNEL, async () => {
+    if (!updaterConfigured) {
+      return {
+        checked: false,
+        state: updateState,
+      } satisfies DesktopUpdateCheckResult;
+    }
+    const checked = await checkForUpdates("web-ui");
+    return {
+      checked,
+      state: updateState,
+    } satisfies DesktopUpdateCheckResult;
   });
 }
 
@@ -1446,9 +1437,9 @@ async function bootstrap(): Promise<void> {
   );
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
-  backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
-  process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
-  writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
+  const baseUrl = `ws://127.0.0.1:${backendPort}`;
+  backendWsUrl = `${baseUrl}/?token=${encodeURIComponent(backendAuthToken)}`;
+  writeDesktopLogHeader(`bootstrap resolved websocket endpoint baseUrl=${baseUrl}`);
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
@@ -1460,6 +1451,7 @@ async function bootstrap(): Promise<void> {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
   stopBackend();
@@ -1489,7 +1481,7 @@ app
   });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  if (process.platform !== "darwin" && !isQuitting) {
     app.quit();
   }
 });

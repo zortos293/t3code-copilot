@@ -10,7 +10,6 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "@t3tools/shared": "workspace:*",
     "astro": "^6.0.4"
   },
   "devDependencies": {

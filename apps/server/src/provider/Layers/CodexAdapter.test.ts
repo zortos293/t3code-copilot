@@ -22,6 +22,7 @@ import {
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -151,6 +152,7 @@ const validationManager = new FakeCodexManager();
 const validationLayer = it.layer(
   makeCodexAdapterLive({ manager: validationManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -188,9 +190,10 @@ validationLayer("CodexAdapterLive validation", (it) => {
       yield* adapter.startSession({
         provider: "codex",
         threadId: asThreadId("thread-1"),
-        model: "gpt-5.3-codex",
-        modelOptions: {
-          codex: {
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.3-codex",
+          options: {
             fastMode: true,
           },
         },
@@ -200,6 +203,7 @@ validationLayer("CodexAdapterLive validation", (it) => {
       assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
         provider: "codex",
         threadId: asThreadId("thread-1"),
+        binaryPath: "codex",
         model: "gpt-5.3-codex",
         serviceTier: "fast",
         runtimeMode: "full-access",
@@ -215,6 +219,7 @@ sessionErrorManager.sendTurnImpl.mockImplementation(async () => {
 const sessionErrorLayer = it.layer(
   makeCodexAdapterLive({ manager: sessionErrorManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -256,9 +261,10 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         adapter.sendTurn({
           threadId: asThreadId("sess-missing"),
           input: "hello",
-          model: "gpt-5.3-codex",
-          modelOptions: {
-            codex: {
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.3-codex",
+            options: {
               reasoningEffort: "high",
               fastMode: true,
             },
@@ -282,6 +288,7 @@ const lifecycleManager = new FakeCodexManager();
 const lifecycleLayer = it.layer(
   makeCodexAdapterLive({ manager: lifecycleManager }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
   ),
@@ -467,6 +474,76 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps process stderr notifications to runtime.warning", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-process-stderr"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        turnId: asTurnId("turn-1"),
+        message: "The filename or extension is too long. (os error 206)",
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "runtime.warning");
+      if (firstEvent.value.type !== "runtime.warning") {
+        return;
+      }
+      assert.equal(firstEvent.value.turnId, "turn-1");
+      assert.equal(
+        firstEvent.value.payload.message,
+        "The filename or extension is too long. (os error 206)",
+      );
+    }),
+  );
+
+  it.effect("maps fatal websocket stderr notifications to runtime.error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-process-stderr-websocket"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        turnId: asTurnId("turn-1"),
+        message:
+          "2026-03-31T18:14:06.833399Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 503 Service Unavailable, url: wss://chatgpt.com/backend-api/codex/responses",
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "runtime.error");
+      if (firstEvent.value.type !== "runtime.error") {
+        return;
+      }
+      assert.equal(firstEvent.value.turnId, "turn-1");
+      assert.equal(firstEvent.value.payload.class, "provider_error");
+      assert.equal(
+        firstEvent.value.payload.message,
+        "2026-03-31T18:14:06.833399Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 503 Service Unavailable, url: wss://chatgpt.com/backend-api/codex/responses",
+      );
+    }),
+  );
+
   it.effect("preserves request type when mapping serverRequest/resolved", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -646,6 +723,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
                     description: "Allow workspace writes only",
                   },
                 ],
+                multiSelect: true,
               },
             ],
           },
@@ -672,6 +750,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         if (events[0]?.type === "user-input.requested") {
           assert.equal(events[0].requestId, "req-user-input-1");
           assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
+          assert.equal(events[0].payload.questions[0]?.multiSelect, true);
         }
 
         assert.equal(events[1]?.type, "user-input.resolved");
@@ -837,6 +916,70 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(firstEvent.value.turnId, "turn-parent");
       assert.equal(firstEvent.value.providerRefs?.providerTurnId, "turn-parent");
       assert.equal(firstEvent.value.payload.taskId, "turn-child");
+    }),
+  );
+
+  it.effect("unwraps Codex token usage payloads for context window events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-codex-thread-token-usage-updated"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: new Date().toISOString(),
+        method: "thread/tokenUsage/updated",
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          tokenUsage: {
+            total: {
+              inputTokens: 11_833,
+              cachedInputTokens: 3456,
+              outputTokens: 6,
+              reasoningOutputTokens: 0,
+              totalTokens: 11_839,
+            },
+            last: {
+              inputTokens: 120,
+              cachedInputTokens: 0,
+              outputTokens: 6,
+              reasoningOutputTokens: 0,
+              totalTokens: 126,
+            },
+            modelContextWindow: 258_400,
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      assert.equal(firstEvent.value.type, "thread.token-usage.updated");
+      if (firstEvent.value.type !== "thread.token-usage.updated") {
+        return;
+      }
+
+      assert.deepEqual(firstEvent.value.payload.usage, {
+        usedTokens: 126,
+        totalProcessedTokens: 11_839,
+        maxTokens: 258_400,
+        inputTokens: 120,
+        cachedInputTokens: 0,
+        outputTokens: 6,
+        reasoningOutputTokens: 0,
+        lastUsedTokens: 126,
+        lastInputTokens: 120,
+        lastCachedInputTokens: 0,
+        lastOutputTokens: 6,
+        lastReasoningOutputTokens: 0,
+        compactsAutomatically: true,
+      });
     }),
   );
 });

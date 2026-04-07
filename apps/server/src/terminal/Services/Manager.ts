@@ -10,28 +10,38 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalCwdError,
+  TerminalError,
+  TerminalHistoryError,
+  TerminalNotRunningError,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalRestartInput,
   TerminalSessionSnapshot,
+  TerminalSessionLookupError,
   TerminalSessionStatus,
   TerminalWriteInput,
 } from "@t3tools/contracts";
 import { PtyProcess } from "./PTY";
-import { Effect, Schema, ServiceMap } from "effect";
+import { Effect, ServiceMap } from "effect";
 
-export class TerminalError extends Schema.TaggedErrorClass<TerminalError>()("TerminalError", {
-  message: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {}
+export {
+  TerminalCwdError,
+  TerminalError,
+  TerminalHistoryError,
+  TerminalNotRunningError,
+  TerminalSessionLookupError,
+};
 
 export interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
+  worktreePath: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
   history: string;
+  pendingHistoryControlSequence: string;
   exitCode: number | null;
   exitSignal: number | null;
   updatedAt: string;
@@ -100,14 +110,13 @@ export interface TerminalManagerShape {
   readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
 
   /**
-   * Subscribe to terminal runtime events.
+   * Subscribe to terminal runtime events with a direct callback.
+   *
+   * Returns an unsubscribe function.
    */
-  readonly subscribe: (listener: (event: TerminalEvent) => void) => Effect.Effect<() => void>;
-
-  /**
-   * Dispose all managed terminal resources.
-   */
-  readonly dispose: Effect.Effect<void>;
+  readonly subscribe: (
+    listener: (event: TerminalEvent) => Effect.Effect<void>,
+  ) => Effect.Effect<() => void>;
 }
 
 /**

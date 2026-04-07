@@ -1,48 +1,66 @@
-import { ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ThreadId, type TerminalEvent } from "@t3tools/contracts";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import {
+  selectTerminalEventEntries,
+  selectThreadTerminalState,
+  useTerminalStateStore,
+} from "./terminalStateStore";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
 
-let selectThreadTerminalState: typeof import("./terminalStateStore").selectThreadTerminalState;
-let useTerminalStateStore: typeof import("./terminalStateStore").useTerminalStateStore;
-
-function createMemoryStorage(): Storage {
-  const backing = new Map<string, string>();
-  return {
-    get length() {
-      return backing.size;
-    },
-    clear() {
-      backing.clear();
-    },
-    getItem(key) {
-      return backing.get(key) ?? null;
-    },
-    key(index) {
-      return [...backing.keys()][index] ?? null;
-    },
-    removeItem(key) {
-      backing.delete(key);
-    },
-    setItem(key, value) {
-      backing.set(key, value);
-    },
+function makeTerminalEvent(
+  type: TerminalEvent["type"],
+  overrides: Partial<TerminalEvent> = {},
+): TerminalEvent {
+  const base = {
+    threadId: THREAD_ID,
+    terminalId: "default",
+    createdAt: "2026-04-02T20:00:00.000Z",
   };
+
+  switch (type) {
+    case "output":
+      return { ...base, type, data: "hello\n", ...overrides } as TerminalEvent;
+    case "activity":
+      return { ...base, type, hasRunningSubprocess: true, ...overrides } as TerminalEvent;
+    case "error":
+      return { ...base, type, message: "boom", ...overrides } as TerminalEvent;
+    case "cleared":
+      return { ...base, type, ...overrides } as TerminalEvent;
+    case "exited":
+      return { ...base, type, exitCode: 0, exitSignal: null, ...overrides } as TerminalEvent;
+    case "started":
+    case "restarted":
+      return {
+        ...base,
+        type,
+        snapshot: {
+          threadId: THREAD_ID,
+          terminalId: "default",
+          cwd: "/tmp/workspace",
+          worktreePath: null,
+          status: "running",
+          pid: 123,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-04-02T20:00:00.000Z",
+        },
+        ...overrides,
+      } as TerminalEvent;
+  }
 }
 
 describe("terminalStateStore actions", () => {
-  beforeEach(async () => {
-    const storage = createMemoryStorage();
-    Object.defineProperty(globalThis, "localStorage", {
-      value: storage,
-      configurable: true,
+  beforeEach(() => {
+    useTerminalStateStore.persist.clearStorage();
+    useTerminalStateStore.setState({
+      terminalStateByThreadId: {},
+      terminalLaunchContextByThreadId: {},
+      terminalEventEntriesByKey: {},
+      nextTerminalEventId: 1,
     });
-    localStorage.clear();
-    vi.resetModules();
-    const module = await import("./terminalStateStore");
-    selectThreadTerminalState = module.selectThreadTerminalState;
-    useTerminalStateStore = module.useTerminalStateStore;
-    useTerminalStateStore.setState({ terminalStateByThreadId: {} });
   });
 
   it("returns a closed default terminal state for unknown threads", () => {
@@ -116,6 +134,23 @@ describe("terminalStateStore actions", () => {
     ]);
   });
 
+  it("ensures unknown server terminals are registered, opened, and activated", () => {
+    const store = useTerminalStateStore.getState();
+    store.ensureTerminal(THREAD_ID, "setup-setup", { open: true, active: true });
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    expect(terminalState.terminalOpen).toBe(true);
+    expect(terminalState.terminalIds).toEqual(["default", "setup-setup"]);
+    expect(terminalState.activeTerminalId).toBe("setup-setup");
+    expect(terminalState.terminalGroups).toEqual([
+      { id: "group-default", terminalIds: ["default"] },
+      { id: "group-setup-setup", terminalIds: ["setup-setup"] },
+    ]);
+  });
+
   it("allows unlimited groups while keeping each group capped at four terminals", () => {
     const store = useTerminalStateStore.getState();
     store.splitTerminal(THREAD_ID, "terminal-2");
@@ -185,5 +220,122 @@ describe("terminalStateStore actions", () => {
     expect(terminalState.terminalGroups).toEqual([
       { id: "group-default", terminalIds: ["default", "terminal-2"] },
     ]);
+  });
+
+  it("buffers terminal events outside persisted terminal UI state", () => {
+    const store = useTerminalStateStore.getState();
+    store.recordTerminalEvent(makeTerminalEvent("output"));
+    store.recordTerminalEvent(makeTerminalEvent("activity"));
+
+    const entries = selectTerminalEventEntries(
+      useTerminalStateStore.getState().terminalEventEntriesByKey,
+      THREAD_ID,
+      "default",
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.id)).toEqual([1, 2]);
+    expect(entries.map((entry) => entry.event.type)).toEqual(["output", "activity"]);
+  });
+
+  it("applies started terminal events to terminal state, launch context, and event buffer", () => {
+    const store = useTerminalStateStore.getState();
+    store.applyTerminalEvent(
+      makeTerminalEvent("started", {
+        terminalId: "setup-bootstrap",
+        snapshot: {
+          threadId: THREAD_ID,
+          terminalId: "setup-bootstrap",
+          cwd: "/tmp/worktree",
+          worktreePath: "/tmp/worktree",
+          status: "running",
+          pid: 123,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-04-02T20:00:00.000Z",
+        },
+      }),
+    );
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    const entries = selectTerminalEventEntries(
+      useTerminalStateStore.getState().terminalEventEntriesByKey,
+      THREAD_ID,
+      "setup-bootstrap",
+    );
+
+    expect(terminalState.terminalOpen).toBe(true);
+    expect(terminalState.activeTerminalId).toBe("setup-bootstrap");
+    expect(terminalState.terminalIds).toEqual(["default", "setup-bootstrap"]);
+    expect(useTerminalStateStore.getState().terminalLaunchContextByThreadId[THREAD_ID]).toEqual({
+      cwd: "/tmp/worktree",
+      worktreePath: "/tmp/worktree",
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.event.type).toBe("started");
+  });
+
+  it("applies activity and exited terminal events to subprocess state while buffering events", () => {
+    const store = useTerminalStateStore.getState();
+    store.ensureTerminal(THREAD_ID, "terminal-2", { open: true, active: true });
+
+    store.applyTerminalEvent(
+      makeTerminalEvent("activity", {
+        terminalId: "terminal-2",
+        hasRunningSubprocess: true,
+      }),
+    );
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .runningTerminalIds,
+    ).toEqual(["terminal-2"]);
+
+    store.applyTerminalEvent(
+      makeTerminalEvent("exited", {
+        terminalId: "terminal-2",
+        exitCode: 0,
+        exitSignal: null,
+      }),
+    );
+
+    const terminalState = selectThreadTerminalState(
+      useTerminalStateStore.getState().terminalStateByThreadId,
+      THREAD_ID,
+    );
+    const entries = selectTerminalEventEntries(
+      useTerminalStateStore.getState().terminalEventEntriesByKey,
+      THREAD_ID,
+      "terminal-2",
+    );
+
+    expect(terminalState.runningTerminalIds).toEqual([]);
+    expect(entries.map((entry) => entry.event.type)).toEqual(["activity", "exited"]);
+  });
+
+  it("clears buffered terminal events when a thread terminal state is removed", () => {
+    const store = useTerminalStateStore.getState();
+    store.recordTerminalEvent(makeTerminalEvent("output"));
+    store.removeTerminalState(THREAD_ID);
+
+    const entries = selectTerminalEventEntries(
+      useTerminalStateStore.getState().terminalEventEntriesByKey,
+      THREAD_ID,
+      "default",
+    );
+
+    expect(entries).toEqual([]);
+  });
+
+  it("is a no-op when clearing terminal state for a thread with no state or buffered events", () => {
+    const store = useTerminalStateStore.getState();
+    const before = useTerminalStateStore.getState();
+
+    store.clearTerminalState(THREAD_ID);
+
+    expect(useTerminalStateStore.getState()).toBe(before);
   });
 });

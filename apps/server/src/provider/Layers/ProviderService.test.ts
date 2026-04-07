@@ -20,7 +20,7 @@ import {
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Fiber, Layer, Option, PubSub, Ref, Stream } from "effect";
+import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -42,7 +42,10 @@ import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+
+const defaultServerSettingsLayer = ServerSettingsService.layerTest();
 
 const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.makeUnsafe(value);
 const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
@@ -188,7 +191,9 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     readThread,
     rollbackThread,
     stopAll,
-    streamEvents: Stream.fromPubSub(runtimeEventPubSub),
+    get streamEvents() {
+      return Stream.fromPubSub(runtimeEventPubSub);
+    },
   };
 
   const emit = (event: LegacyProviderRuntimeEvent): void => {
@@ -227,6 +232,17 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
 const sleep = (ms: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
+const hasMetricSnapshot = (
+  snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+  id: string,
+  attributes: Readonly<Record<string, string>>,
+) =>
+  snapshots.some(
+    (snapshot) =>
+      snapshot.id === id &&
+      Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
+  );
+
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter("claudeAgent");
@@ -251,6 +267,7 @@ function makeProviderServiceLayer() {
       makeProviderServiceLive().pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
         Layer.provideMerge(AnalyticsService.layerTest),
       ),
       directoryLayer,
@@ -266,6 +283,55 @@ function makeProviderServiceLayer() {
     layer,
   };
 }
+
+it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
+  Effect.gen(function* () {
+    const codex = makeFakeCodexAdapter();
+    const claude = makeFakeCodexAdapter("claudeAgent");
+    const registry: typeof ProviderAdapterRegistry.Service = {
+      getByProvider: (provider) =>
+        provider === "codex"
+          ? Effect.succeed(codex.adapter)
+          : provider === "claudeAgent"
+            ? Effect.succeed(claude.adapter)
+            : Effect.fail(new ProviderUnsupportedError({ provider })),
+      listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
+    };
+    const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
+    const serverSettingsLayer = ServerSettingsService.layerTest({
+      providers: {
+        claudeAgent: {
+          enabled: false,
+        },
+      },
+    });
+    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(providerAdapterLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(serverSettingsLayer),
+      Layer.provide(AnalyticsService.layerTest),
+    );
+
+    const failure = yield* Effect.flip(
+      Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        return yield* provider.startSession(asThreadId("thread-disabled"), {
+          provider: "claudeAgent",
+          threadId: asThreadId("thread-disabled"),
+          runtimeMode: "full-access",
+        });
+      }).pipe(Effect.provide(providerLayer)),
+    );
+
+    assert.instanceOf(failure, ProviderValidationError);
+    assert.include(failure.issue, "Provider 'claudeAgent' is disabled in T3 Code settings.");
+    assert.equal(claude.startSession.mock.calls.length, 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 const routing = makeProviderServiceLayer();
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
@@ -299,6 +365,7 @@ it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", (
     const providerLayer = makeProviderServiceLive().pipe(
       Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
       Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
       Layer.provide(AnalyticsService.layerTest),
     );
 
@@ -358,6 +425,7 @@ it.effect(
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
         Layer.provide(AnalyticsService.layerTest),
       );
       const updatedResumeCursor = {
@@ -409,6 +477,7 @@ it.effect(
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
         Layer.provide(AnalyticsService.layerTest),
       );
 
@@ -633,8 +702,10 @@ routing.layer("ProviderServiceLive routing", (it) => {
         provider: "claudeAgent",
         threadId: asThreadId("thread-claude-send-turn"),
         cwd: "/tmp/project-claude-send-turn",
-        modelOptions: {
-          claudeAgent: {
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+          options: {
             effort: "max",
           },
         },
@@ -658,14 +729,16 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const startPayload = resumedStartInput as {
           provider?: string;
           cwd?: string;
-          modelOptions?: unknown;
+          modelSelection?: unknown;
           resumeCursor?: unknown;
           threadId?: string;
         };
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.cwd, "/tmp/project-claude-send-turn");
-        assert.deepEqual(startPayload.modelOptions, {
-          claudeAgent: {
+        assert.deepEqual(startPayload.modelSelection, {
+          provider: "claudeAgent",
+          model: "claude-opus-4-6",
+          options: {
             effort: "max",
           },
         });
@@ -765,6 +838,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const firstProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
         Layer.provide(firstDirectoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
         Layer.provide(AnalyticsService.layerTest),
       );
 
@@ -797,6 +871,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const secondProviderLayer = makeProviderServiceLive().pipe(
         Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
         Layer.provide(secondDirectoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
         Layer.provide(AnalyticsService.layerTest),
       );
 
@@ -997,6 +1072,120 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         ["evt-ordered-1", "evt-ordered-2", "evt-ordered-3"],
       );
     }),
+  );
+
+  it.effect("records provider metrics with the routed provider label", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const session = yield* provider.startSession(asThreadId("thread-metrics"), {
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-metrics"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.interruptTurn({ threadId: session.threadId });
+      yield* provider.respondToRequest({
+        threadId: session.threadId,
+        requestId: asRequestId("req-metrics-1"),
+        decision: "accept",
+      });
+      yield* provider.respondToUserInput({
+        threadId: session.threadId,
+        requestId: asRequestId("req-metrics-2"),
+        answers: {
+          sandbox_mode: "workspace-write",
+        },
+      });
+      yield* provider.rollbackConversation({
+        threadId: session.threadId,
+        numTurns: 1,
+      });
+      yield* provider.stopSession({ threadId: session.threadId });
+
+      const snapshots = yield* Metric.snapshot;
+
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
+          provider: "claudeAgent",
+          operation: "interrupt",
+          outcome: "success",
+        }),
+        true,
+      );
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
+          provider: "claudeAgent",
+          operation: "approval-response",
+          outcome: "success",
+        }),
+        true,
+      );
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
+          provider: "claudeAgent",
+          operation: "user-input-response",
+          outcome: "success",
+        }),
+        true,
+      );
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
+          provider: "claudeAgent",
+          operation: "rollback",
+          outcome: "success",
+        }),
+        true,
+      );
+      assert.equal(
+        hasMetricSnapshot(snapshots, "t3_provider_sessions_total", {
+          provider: "claudeAgent",
+          operation: "stop",
+          outcome: "success",
+        }),
+        true,
+      );
+    }),
+  );
+
+  it.effect(
+    "records sendTurn metrics with the resolved provider when modelSelection is omitted",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService;
+
+        const session = yield* provider.startSession(asThreadId("thread-send-metrics"), {
+          provider: "claudeAgent",
+          threadId: asThreadId("thread-send-metrics"),
+          cwd: "/tmp/project-send-metrics",
+          runtimeMode: "full-access",
+        });
+
+        yield* provider.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        const snapshots = yield* Metric.snapshot;
+
+        assert.equal(
+          hasMetricSnapshot(snapshots, "t3_provider_turns_total", {
+            provider: "claudeAgent",
+            operation: "send",
+            outcome: "success",
+          }),
+          true,
+        );
+        assert.equal(
+          hasMetricSnapshot(snapshots, "t3_provider_turn_duration", {
+            provider: "claudeAgent",
+            operation: "send",
+          }),
+          true,
+        );
+      }),
   );
 });
 

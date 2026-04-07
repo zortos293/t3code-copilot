@@ -7,6 +7,26 @@ export const MAX_WHEN_EXPRESSION_DEPTH = 64;
 export const MAX_SCRIPT_ID_LENGTH = 24;
 export const MAX_KEYBINDINGS_COUNT = 256;
 
+export const THREAD_JUMP_KEYBINDING_COMMANDS = [
+  "thread.jump.1",
+  "thread.jump.2",
+  "thread.jump.3",
+  "thread.jump.4",
+  "thread.jump.5",
+  "thread.jump.6",
+  "thread.jump.7",
+  "thread.jump.8",
+  "thread.jump.9",
+] as const;
+export type ThreadJumpKeybindingCommand = (typeof THREAD_JUMP_KEYBINDING_COMMANDS)[number];
+
+export const THREAD_KEYBINDING_COMMANDS = [
+  "thread.previous",
+  "thread.next",
+  ...THREAD_JUMP_KEYBINDING_COMMANDS,
+] as const;
+export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
+
 const STATIC_KEYBINDING_COMMANDS = [
   "terminal.toggle",
   "terminal.split",
@@ -16,6 +36,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+  ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
@@ -64,24 +85,27 @@ export const KeybindingShortcut = Schema.Struct({
 });
 export type KeybindingShortcut = typeof KeybindingShortcut.Type;
 
-export const KeybindingWhenNode: Schema.Schema<KeybindingWhenNode> = Schema.Union([
+const KeybindingWhenNodeRef = Schema.suspend(
+  (): Schema.Codec<KeybindingWhenNode> => KeybindingWhenNode,
+);
+export const KeybindingWhenNode = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("identifier"),
     name: Schema.NonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("not"),
-    node: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    node: KeybindingWhenNodeRef,
   }),
   Schema.Struct({
     type: Schema.Literal("and"),
-    left: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
-    right: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    left: KeybindingWhenNodeRef,
+    right: KeybindingWhenNodeRef,
   }),
   Schema.Struct({
     type: Schema.Literal("or"),
-    left: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
-    right: Schema.suspend((): Schema.Schema<KeybindingWhenNode> => KeybindingWhenNode),
+    left: KeybindingWhenNodeRef,
+    right: KeybindingWhenNodeRef,
   }),
 ]);
 export type KeybindingWhenNode =
@@ -101,3 +125,16 @@ export const ResolvedKeybindingsConfig = Schema.Array(ResolvedKeybindingRule).ch
   Schema.isMaxLength(MAX_KEYBINDINGS_COUNT),
 );
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;
+
+export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
+  "KeybindingsConfigParseError",
+  {
+    configPath: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
+  }
+}

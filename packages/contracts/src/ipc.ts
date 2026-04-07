@@ -1,5 +1,6 @@
 import type {
   GitCheckoutInput,
+  GitCheckoutResult,
   GitCreateBranchInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -13,10 +14,9 @@ import type {
   GitPullResult,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
-  GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
+  GitCreateBranchResult,
 } from "./git";
 import type {
   ProjectSearchEntriesInput,
@@ -25,31 +25,10 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type {
-  SkillsListResult,
-  SkillsToggleInput,
-  SkillsToggleResult,
-  SkillsSearchInput,
-  SkillsSearchResult,
-  SkillsInstallInput,
-  SkillsInstallResult,
-  SkillsUninstallInput,
-  SkillsUninstallResult,
-  SkillsReadContentInput,
-  SkillsReadContentResult,
-} from "./skills";
-import type {
-  McpListResult,
-  McpAddInput,
-  McpAddResult,
-  McpRemoveInput,
-  McpRemoveResult,
-  McpToggleInput,
-  McpToggleResult,
-  McpUpdateInput,
-  McpUpdateResult,
-  McpBrowseResult,
-} from "./mcp";
-import type { ServerConfig } from "./server";
+  ServerConfig,
+  ServerProviderUpdatedPayload,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -60,7 +39,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
+import type { ServerUpsertKeybindingInput } from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -71,11 +50,13 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import { EditorId } from "./editor";
+import { ServerSettings, ServerSettingsPatch } from "./settings";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
   label: string;
   destructive?: boolean;
+  disabled?: boolean;
 }
 
 export type DesktopUpdateStatus =
@@ -119,6 +100,11 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export interface DesktopUpdateCheckResult {
+  checked: boolean;
+  state: DesktopUpdateState;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -131,6 +117,7 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
+  checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
@@ -142,12 +129,12 @@ export interface NativeApi {
     confirm: (message: string) => Promise<boolean>;
   };
   terminal: {
-    open: (input: TerminalOpenInput) => Promise<TerminalSessionSnapshot>;
-    write: (input: TerminalWriteInput) => Promise<void>;
-    resize: (input: TerminalResizeInput) => Promise<void>;
-    clear: (input: TerminalClearInput) => Promise<void>;
-    restart: (input: TerminalRestartInput) => Promise<TerminalSessionSnapshot>;
-    close: (input: TerminalCloseInput) => Promise<void>;
+    open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
+    write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
+    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
+    clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
+    restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
+    close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
@@ -163,8 +150,8 @@ export interface NativeApi {
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
     createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
     removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
-    createBranch: (input: GitCreateBranchInput) => Promise<void>;
-    checkout: (input: GitCheckoutInput) => Promise<void>;
+    createBranch: (input: GitCreateBranchInput) => Promise<GitCreateBranchResult>;
+    checkout: (input: GitCheckoutInput) => Promise<GitCheckoutResult>;
     init: (input: GitInitInput) => Promise<void>;
     resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
     preparePullRequestThread: (
@@ -172,8 +159,14 @@ export interface NativeApi {
     ) => Promise<GitPreparePullRequestThreadResult>;
     // Stacked action API
     pull: (input: GitPullInput) => Promise<GitPullResult>;
-    status: (input: GitStatusInput) => Promise<GitStatusResult>;
-    runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
+    refreshStatus: (input: GitStatusInput) => Promise<GitStatusResult>;
+    onStatus: (
+      input: GitStatusInput,
+      callback: (status: GitStatusResult) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
   };
   contextMenu: {
     show: <T extends string>(
@@ -181,25 +174,12 @@ export interface NativeApi {
       position?: { x: number; y: number },
     ) => Promise<T | null>;
   };
-  skills: {
-    list: () => Promise<SkillsListResult>;
-    toggle: (input: SkillsToggleInput) => Promise<SkillsToggleResult>;
-    search: (input: SkillsSearchInput) => Promise<SkillsSearchResult>;
-    install: (input: SkillsInstallInput) => Promise<SkillsInstallResult>;
-    uninstall: (input: SkillsUninstallInput) => Promise<SkillsUninstallResult>;
-    readContent: (input: SkillsReadContentInput) => Promise<SkillsReadContentResult>;
-  };
-  mcp: {
-    list: () => Promise<McpListResult>;
-    add: (input: McpAddInput) => Promise<McpAddResult>;
-    remove: (input: McpRemoveInput) => Promise<McpRemoveResult>;
-    toggle: (input: McpToggleInput) => Promise<McpToggleResult>;
-    update: (input: McpUpdateInput) => Promise<McpUpdateResult>;
-    browse: () => Promise<McpBrowseResult>;
-  };
   server: {
     getConfig: () => Promise<ServerConfig>;
+    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    getSettings: () => Promise<ServerSettings>;
+    updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
@@ -209,6 +189,11 @@ export interface NativeApi {
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
     replayEvents: (fromSequenceExclusive: number) => Promise<OrchestrationEvent[]>;
-    onDomainEvent: (callback: (event: OrchestrationEvent) => void) => () => void;
+    onDomainEvent: (
+      callback: (event: OrchestrationEvent) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
   };
 }

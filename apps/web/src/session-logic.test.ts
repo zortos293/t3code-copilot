@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  deriveCompletionDividerBeforeEntryId,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   PROVIDER_OPTIONS,
@@ -18,7 +19,6 @@ import {
   findLatestProposedPlan,
   findSidebarProposedPlan,
   hasActionableProposedPlan,
-  hasToolActivitySince,
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
@@ -197,6 +197,7 @@ describe("derivePendingUserInputs", () => {
                   description: "Allow workspace writes only",
                 },
               ],
+              multiSelect: true,
             },
           ],
         },
@@ -233,6 +234,7 @@ describe("derivePendingUserInputs", () => {
                   description: "Continue execution",
                 },
               ],
+              multiSelect: false,
             },
           ],
         },
@@ -254,6 +256,7 @@ describe("derivePendingUserInputs", () => {
                 description: "Allow workspace writes only",
               },
             ],
+            multiSelect: true,
           },
         ],
       },
@@ -281,6 +284,7 @@ describe("derivePendingUserInputs", () => {
                   description: "Allow workspace writes only",
                 },
               ],
+              multiSelect: false,
             },
           ],
         },
@@ -709,12 +713,103 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
-  it("keeps rich tool metadata used for tool rendering", () => {
+  it("unwraps PowerShell command wrappers for displayed command text", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-wrapper",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'bun run lint'",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("bun run lint");
+    expect(entry?.rawCommand).toBe(
+      "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -Command 'bun run lint'",
+    );
+  });
+
+  it("unwraps PowerShell command wrappers from argv-style command payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-wrapper-argv",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-Command", "rg -n foo ."],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("rg -n foo .");
+    expect(entry?.rawCommand).toBe(
+      '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "rg -n foo ."',
+    );
+  });
+
+  it("extracts command text from command detail when structured command metadata is missing", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-windows-detail-fallback",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          detail:
+            '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command \'rg -n -F "new Date()" .\' <exited with exit code 0>',
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe('rg -n -F "new Date()" .');
+    expect(entry?.rawCommand).toBe(
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+    );
+  });
+
+  it("does not unwrap shell commands when no wrapper flag is present", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-shell-script",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "bash script.sh",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.command).toBe("bash script.sh");
+    expect(entry?.rawCommand).toBeUndefined();
+  });
+
+  it("keeps compact Codex tool metadata used for icons and labels", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-with-metadata",
         kind: "tool.completed",
-        summary: "bash complete",
+        summary: "bash",
         payload: {
           itemType: "command_execution",
           title: "bash",
@@ -735,13 +830,9 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities, undefined);
     expect(entry).toMatchObject({
-      activityKind: "tool.completed",
       command: "bun run dev",
       detail: '{ "dev": "vite dev --port 3000" }',
-      exitCode: 0,
       itemType: "command_execution",
-      output: '{ "dev": "vite dev --port 3000" }',
-      toolStatus: "completed",
       toolTitle: "bash",
     });
   });
@@ -770,77 +861,6 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.changedFiles).toEqual([
       "apps/web/src/components/ChatView.tsx",
       "apps/web/src/session-logic.ts",
-    ]);
-  });
-
-  it("keeps tool item types for icon rendering", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "web-search-tool",
-        kind: "tool.completed",
-        summary: "Web search complete",
-        payload: {
-          itemType: "web_search",
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities, undefined);
-    expect(entry?.activityKind).toBe("tool.completed");
-    expect(entry?.itemType).toBe("web_search");
-  });
-
-  it("maps request kinds for approval work log entries", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "approval-entry",
-        kind: "approval.requested",
-        summary: "File-read approval requested",
-        tone: "approval",
-        payload: {
-          requestType: "file_read_approval",
-        },
-      }),
-    ];
-
-    const [entry] = deriveWorkLogEntries(activities, undefined);
-    expect(entry?.activityKind).toBe("approval.requested");
-    expect(entry?.requestKind).toBe("file-read");
-    expect(entry?.tone).toBe("info");
-  });
-
-  it("keeps multi-turn tool activity since the latest user message", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "before-user",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: "turn-1",
-        summary: "Old tool call",
-        kind: "tool.completed",
-        tone: "tool",
-      }),
-      makeActivity({
-        id: "after-user-first-turn",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        turnId: "turn-2",
-        summary: "First Copilot tool call",
-        kind: "tool.completed",
-        tone: "tool",
-      }),
-      makeActivity({
-        id: "after-user-second-turn",
-        createdAt: "2026-02-23T00:00:04.000Z",
-        turnId: "turn-3",
-        summary: "Second Copilot tool call",
-        kind: "tool.completed",
-        tone: "tool",
-      }),
-    ];
-
-    const entries = deriveWorkLogEntries(activities, undefined, "2026-02-23T00:00:02.000Z");
-    expect(entries.map((entry) => entry.id)).toEqual([
-      "after-user-first-turn",
-      "after-user-second-turn",
     ]);
   });
 
@@ -1026,7 +1046,6 @@ describe("deriveTimelineEntries", () => {
           createdAt: "2026-02-23T00:00:03.000Z",
           label: "Ran tests",
           tone: "tool",
-          activityKind: "tool.completed",
         },
       ],
     );
@@ -1040,6 +1059,82 @@ describe("deriveTimelineEntries", () => {
         implementationThreadId: null,
       },
     });
+  });
+
+  it("anchors the completion divider to latestTurn.assistantMessageId before timestamp fallback", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.makeUnsafe("assistant-earlier"),
+          role: "assistant",
+          text: "progress update",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+        {
+          id: MessageId.makeUnsafe("assistant-final"),
+          role: "assistant",
+          text: "final answer",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [],
+    );
+
+    expect(
+      deriveCompletionDividerBeforeEntryId(entries, {
+        assistantMessageId: MessageId.makeUnsafe("assistant-final"),
+        startedAt: "2026-02-23T00:00:00.000Z",
+        completedAt: "2026-02-23T00:00:02.000Z",
+      }),
+    ).toBe("assistant-final");
+  });
+});
+
+describe("deriveWorkLogEntries context window handling", () => {
+  it("excludes context window updates from the work log", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeActivity({
+          id: "context-1",
+          turnId: "turn-1",
+          kind: "context-window.updated",
+          summary: "Context window updated",
+          tone: "info",
+        }),
+        makeActivity({
+          id: "tool-1",
+          turnId: "turn-1",
+          kind: "tool.completed",
+          summary: "Ran command",
+          tone: "tool",
+        }),
+      ],
+      TurnId.makeUnsafe("turn-1"),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Ran command");
+  });
+
+  it("keeps context compaction activities as normal work log entries", () => {
+    const entries = deriveWorkLogEntries(
+      [
+        makeActivity({
+          id: "compaction-1",
+          turnId: "turn-1",
+          kind: "context-compaction",
+          summary: "Context compacted",
+          tone: "info",
+        }),
+      ],
+      TurnId.makeUnsafe("turn-1"),
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.label).toBe("Context compacted");
   });
 });
 
@@ -1061,30 +1156,6 @@ describe("hasToolActivityForTurn", () => {
 
     expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-1"))).toBe(true);
     expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-2"))).toBe(false);
-  });
-});
-
-describe("hasToolActivitySince", () => {
-  it("tracks tool activity across multiple turns since the latest user message", () => {
-    const activities: OrchestrationThreadActivity[] = [
-      makeActivity({
-        id: "before-user",
-        createdAt: "2026-02-23T00:00:01.000Z",
-        turnId: "turn-1",
-        kind: "tool.completed",
-        tone: "tool",
-      }),
-      makeActivity({
-        id: "after-user",
-        createdAt: "2026-02-23T00:00:03.000Z",
-        turnId: "turn-2",
-        kind: "tool.completed",
-        tone: "tool",
-      }),
-    ];
-
-    expect(hasToolActivitySince(activities, "2026-02-23T00:00:02.000Z")).toBe(true);
-    expect(hasToolActivitySince(activities, "2026-02-23T00:00:04.000Z")).toBe(false);
   });
 });
 
@@ -1185,21 +1256,14 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("PROVIDER_OPTIONS", () => {
-  it("advertises Copilot and Claude while keeping Cursor as a placeholder", () => {
-    const copilot = PROVIDER_OPTIONS.find((option) => option.value === "copilot");
+  it("advertises Claude as available while keeping Cursor as a placeholder", () => {
     const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },
-      { value: "copilot", label: "GitHub Copilot", available: true },
       { value: "claudeAgent", label: "Claude", available: true },
       { value: "cursor", label: "Cursor", available: false },
     ]);
-    expect(copilot).toEqual({
-      value: "copilot",
-      label: "GitHub Copilot",
-      available: true,
-    });
     expect(claude).toEqual({
       value: "claudeAgent",
       label: "Claude",
