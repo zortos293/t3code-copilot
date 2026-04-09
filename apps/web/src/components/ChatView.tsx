@@ -4072,8 +4072,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
               <MessagesTimeline
                 key={activeThread.id}
                 hasMessages={timelineEntries.length > 0}
-                isWorking={!latestTurnSettled || isWorking}
-                activeTurnInProgress={!latestTurnSettled || isWorking}
+                isWorking={(activeLatestTurn !== null && !latestTurnSettled) || isWorking}
+                activeTurnInProgress={
+                  (activeLatestTurn !== null && !latestTurnSettled) || isWorking
+                }
                 activeTurnStartedAt={activeWorkStartedAt}
                 scrollContainer={messagesScrollElement}
                 timelineEntries={timelineEntries}
