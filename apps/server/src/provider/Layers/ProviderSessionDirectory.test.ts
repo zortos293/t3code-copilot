@@ -204,4 +204,47 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
+
+  it("accepts persisted copilot bindings during decode and restart rehydration", () =>
+    Effect.gen(function* () {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-copilot-"));
+      const dbPath = path.join(tempDir, "orchestration.sqlite");
+      const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
+
+      const threadId = ThreadId.makeUnsafe("thread-copilot-restart");
+
+      yield* Effect.gen(function* () {
+        const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId,
+          providerName: "copilot",
+          adapterKey: "copilot",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: new Date().toISOString(),
+          resumeCursor: { sessionId: "copilot-session-1" },
+          runtimePayload: { model: "gpt-5" },
+        });
+      }).pipe(Effect.provide(directoryLayer));
+
+      yield* Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+
+        const provider = yield* directory.getProvider(threadId);
+        assert.equal(provider, "copilot");
+
+        const binding = yield* directory.getBinding(threadId);
+        assertSome(binding, {
+          threadId,
+          provider: "copilot",
+        });
+        if (Option.isSome(binding)) {
+          assert.equal(binding.value.adapterKey, "copilot");
+          assert.deepEqual(binding.value.resumeCursor, { sessionId: "copilot-session-1" });
+          assert.deepEqual(binding.value.runtimePayload, { model: "gpt-5" });
+        }
+      }).pipe(Effect.provide(directoryLayer));
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }));
 });
