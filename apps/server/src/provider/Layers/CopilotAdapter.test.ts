@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ThreadId } from "@t3tools/contracts";
-import { type SessionEvent } from "@github/copilot-sdk";
+import { type ModelInfo, type SessionEvent } from "@github/copilot-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, it, vi } from "@effect/vitest";
 
@@ -93,7 +93,7 @@ class FakeCopilotSession {
 
 class FakeCopilotClient {
   public readonly startImpl = vi.fn(async () => undefined);
-  public readonly listModelsImpl = vi.fn(async () => []);
+  public readonly listModelsImpl = vi.fn<() => Promise<ModelInfo[]>>(async () => []);
   public readonly createSessionImpl = vi.fn(async (_config: unknown) => this.session);
   public readonly resumeSessionImpl = vi.fn(
     async (_sessionId: string, _config: unknown) => this.session,
@@ -278,6 +278,14 @@ it.effect("CopilotAdapterLive MCP config loading", () =>
               "utf8",
             );
             mcpClient.createSessionImpl.mockClear();
+            mcpClient.listModelsImpl.mockImplementation(async () => [
+              {
+                id: "gpt-5",
+                name: "GPT-5",
+                capabilities: {} as ModelInfo["capabilities"],
+                supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+              },
+            ]);
 
             const adapter = yield* CopilotAdapter;
             yield* adapter.startSession({

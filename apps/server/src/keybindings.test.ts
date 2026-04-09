@@ -403,15 +403,17 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("fails when config directory is not writable", () =>
+  it.effect("fails when config path parent cannot be created", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig;
       const { dirname } = yield* Path.Path;
+      const configDir = dirname(keybindingsConfigPath);
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
         { key: "mod+j", command: "terminal.toggle" },
       ]);
-      yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
+      yield* fs.remove(configDir, { recursive: true, force: true });
+      yield* fs.writeFileString(configDir, "blocked");
 
       const result = yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings;
@@ -420,9 +422,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           command: "script.run-tests.run",
         });
       }).pipe(toDetailResult);
-      assertFailure(result, "failed to write keybindings config");
+      assertFailure(result, "failed to access keybindings config");
 
-      yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
+      yield* fs.remove(configDir, { force: true });
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+j", command: "terminal.toggle" },
+      ]);
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       const persistedView = persisted.map(({ key, command }) => ({ key, command }));
