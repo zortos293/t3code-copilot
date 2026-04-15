@@ -24,6 +24,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: new Date().toISOString(),
+    slashCommands: [],
+    skills: [],
     models: [
       {
         slug: "gpt-5-codex",
@@ -52,55 +54,6 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     ],
   },
   {
-    provider: "copilot",
-    enabled: true,
-    installed: true,
-    version: "1.0.0",
-    status: "ready",
-    auth: { status: "authenticated" },
-    checkedAt: new Date().toISOString(),
-    quotaSnapshots: [
-      {
-        key: "premium_interactions",
-        entitlementRequests: 300,
-        usedRequests: 120,
-        remainingPercentage: 0.6,
-        overage: 0,
-        overageAllowedWithExhaustedQuota: true,
-        usageAllowedWithExhaustedQuota: true,
-        resetDate: "2026-04-30T00:00:00.000Z",
-      },
-    ],
-    models: [
-      {
-        slug: "gpt-5.4",
-        name: "GPT-5.4",
-        isCustom: false,
-        billingMultiplier: 1,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
-      },
-      {
-        slug: "gpt-5.4-mini",
-        name: "GPT-5.4 Mini",
-        isCustom: false,
-        billingMultiplier: 0.33,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
-      },
-    ],
-  },
-  {
     provider: "claudeAgent",
     enabled: true,
     installed: true,
@@ -108,6 +61,8 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: new Date().toISOString(),
+    slashCommands: [],
+    skills: [],
     models: [
       {
         slug: "claude-opus-4-6",
@@ -169,6 +124,8 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
     auth: { status: "authenticated" },
     checkedAt: new Date().toISOString(),
     models,
+    slashCommands: [],
+    skills: [],
   };
 }
 
@@ -297,43 +254,6 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Claude Sonnet 4.6");
         expect(text).toContain("Claude Haiku 4.5");
         expect(text).not.toContain("Codex");
-      });
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
-  it("shows Copilot premium usage inline while keeping multipliers in the model list", async () => {
-    const mounted = await mountPicker({
-      provider: "copilot",
-      model: "gpt-5.4",
-      lockedProvider: "copilot",
-    });
-
-    try {
-      await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
-        expect(text).toContain("GPT-5.4");
-        expect(text).toContain("180 left");
-        expect(text).not.toContain("GPT-5.4 — 1x");
-      });
-
-      await page.getByRole("button").click();
-
-      await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
-        expect(text).toContain("180 left");
-        expect(text).toContain("120 / 300 used");
-        expect(text).toContain("GPT-5.4");
-        expect(text).toContain("GPT-5.4 Mini");
-        expect(text).toContain("1x");
-        expect(text).toContain("0.33x");
-        expect(text).not.toContain("GPT-5.4 — 1x");
-        expect(text).not.toContain("GPT-5.4 Mini — 0.33x");
-        expect(text).toContain("60% remaining");
-        expect(text).not.toContain("Copilot premium usage");
-        expect(text).not.toContain("Resets ");
-        expect(text).not.toContain("Pay-per-request available after quota exhaustion");
       });
     } finally {
       await mounted.cleanup();

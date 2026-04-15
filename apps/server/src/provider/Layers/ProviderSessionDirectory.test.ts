@@ -36,7 +36,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
-      const initialThreadId = ThreadId.makeUnsafe("thread-1");
+      const initialThreadId = ThreadId.make("thread-1");
 
       yield* directory.upsert({
         provider: "codex",
@@ -54,7 +54,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         assert.equal(resolvedBinding.value.threadId, initialThreadId);
       }
 
-      const nextThreadId = ThreadId.makeUnsafe("thread-2");
+      const nextThreadId = ThreadId.make("thread-2");
 
       yield* directory.upsert({
         provider: "codex",
@@ -93,7 +93,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
 
-      const threadId = ThreadId.makeUnsafe("thread-runtime");
+      const threadId = ThreadId.make("thread-runtime");
 
       yield* directory.upsert({
         provider: "codex",
@@ -137,7 +137,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
-      const threadId = ThreadId.makeUnsafe("thread-provider-change");
+      const threadId = ThreadId.make("thread-provider-change");
 
       yield* runtimeRepository.upsert({
         threadId,
@@ -169,7 +169,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
 
-      const threadId = ThreadId.makeUnsafe("thread-restart");
+      const threadId = ThreadId.make("thread-restart");
 
       yield* Effect.gen(function* () {
         const directory = yield* ProviderSessionDirectory;
@@ -200,49 +200,6 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           WHERE type = 'table' AND name = 'provider_sessions'
         `;
         assert.equal(legacyTableRows.length, 0);
-      }).pipe(Effect.provide(directoryLayer));
-
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }));
-
-  it("accepts persisted copilot bindings during decode and restart rehydration", () =>
-    Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-directory-copilot-"));
-      const dbPath = path.join(tempDir, "orchestration.sqlite");
-      const directoryLayer = makeDirectoryLayer(makeSqlitePersistenceLive(dbPath));
-
-      const threadId = ThreadId.makeUnsafe("thread-copilot-restart");
-
-      yield* Effect.gen(function* () {
-        const runtimeRepository = yield* ProviderSessionRuntimeRepository;
-        yield* runtimeRepository.upsert({
-          threadId,
-          providerName: "copilot",
-          adapterKey: "copilot",
-          runtimeMode: "full-access",
-          status: "running",
-          lastSeenAt: new Date().toISOString(),
-          resumeCursor: { sessionId: "copilot-session-1" },
-          runtimePayload: { model: "gpt-5" },
-        });
-      }).pipe(Effect.provide(directoryLayer));
-
-      yield* Effect.gen(function* () {
-        const directory = yield* ProviderSessionDirectory;
-
-        const provider = yield* directory.getProvider(threadId);
-        assert.equal(provider, "copilot");
-
-        const binding = yield* directory.getBinding(threadId);
-        assertSome(binding, {
-          threadId,
-          provider: "copilot",
-        });
-        if (Option.isSome(binding)) {
-          assert.equal(binding.value.adapterKey, "copilot");
-          assert.deepEqual(binding.value.resumeCursor, { sessionId: "copilot-session-1" });
-          assert.deepEqual(binding.value.runtimePayload, { model: "gpt-5" });
-        }
       }).pipe(Effect.provide(directoryLayer));
 
       fs.rmSync(tempDir, { recursive: true, force: true });

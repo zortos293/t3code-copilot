@@ -4,15 +4,17 @@
  * request input.
  *
  * When `modelSelection.provider` is `"claudeAgent"` the request is forwarded to
- * the Claude layer; for any other value (including the default `undefined`) it
- * falls through to the Codex layer.
+ * the Claude layer; Copilot and Codex both use the Codex text-generation path.
  *
  * @module RoutingTextGeneration
  */
-import { Effect, Layer, ServiceMap } from "effect";
-import type { ProviderKind } from "@t3tools/contracts";
+import { Effect, Layer, Context } from "effect";
 
-import { TextGeneration, type TextGenerationShape } from "../Services/TextGeneration.ts";
+import {
+  TextGeneration,
+  type TextGenerationProvider,
+  type TextGenerationShape,
+} from "../Services/TextGeneration.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 
@@ -20,11 +22,11 @@ import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 // Internal service tags so both concrete layers can coexist.
 // ---------------------------------------------------------------------------
 
-class CodexTextGen extends ServiceMap.Service<CodexTextGen, TextGenerationShape>()(
+class CodexTextGen extends Context.Service<CodexTextGen, TextGenerationShape>()(
   "t3/git/Layers/RoutingTextGeneration/CodexTextGen",
 ) {}
 
-class ClaudeTextGen extends ServiceMap.Service<ClaudeTextGen, TextGenerationShape>()(
+class ClaudeTextGen extends Context.Service<ClaudeTextGen, TextGenerationShape>()(
   "t3/git/Layers/RoutingTextGeneration/ClaudeTextGen",
 ) {}
 
@@ -36,7 +38,7 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
   const codex = yield* CodexTextGen;
   const claude = yield* ClaudeTextGen;
 
-  const route = (provider?: ProviderKind): TextGenerationShape =>
+  const route = (provider?: TextGenerationProvider): TextGenerationShape =>
     provider === "claudeAgent" ? claude : codex;
 
   return {

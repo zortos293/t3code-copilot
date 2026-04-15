@@ -6,18 +6,19 @@ import {
   LoaderIcon,
   PlusIcon,
   RefreshCwIcon,
-  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
+  type DesktopUpdateChannel,
+  type ScopedThreadRef,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
-  ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { Equal } from "effect";
@@ -41,13 +42,18 @@ import {
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
 import {
-  createModelSelection,
   MAX_CUSTOM_MODEL_LENGTH,
   getCustomModelOptionsByProvider,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { ensureNativeApi, readNativeApi } from "../../nativeApi";
-import { useStore } from "../../store";
+import { createModelSelection } from "../../modelSelectionUtils";
+import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { useShallow } from "zustand/react/shallow";
+import {
+  selectProjectsAcrossEnvironments,
+  selectThreadShellsAcrossEnvironments,
+  useStore,
+} from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -58,6 +64,13 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  useRelativeTimeTick,
+} from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
@@ -92,6 +105,7 @@ type InstallProviderSettings = {
   title: string;
   binaryPlaceholder: string;
   binaryDescription: ReactNode;
+  homePathKey?: "codexHomePath";
   homePlaceholder?: string;
   homeDescription?: ReactNode;
 };
@@ -102,6 +116,7 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     title: "Codex",
     binaryPlaceholder: "Codex binary path",
     binaryDescription: "Path to the Codex binary",
+    homePathKey: "codexHomePath",
     homePlaceholder: "CODEX_HOME",
     homeDescription: "Optional custom Codex home and config directory.",
   },
@@ -194,15 +209,6 @@ function getProviderVersionLabel(version: string | null | undefined) {
   return version.startsWith("v") ? version : `v${version}`;
 }
 
-function useRelativeTimeTick(intervalMs = 1_000) {
-  const [tick, setTick] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setTick(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return tick;
-}
-
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
   const lastCheckedRelative = lastCheckedAt ? formatRelativeTime(lastCheckedAt) : null;
@@ -225,104 +231,6 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   );
 }
 
-function SettingsSection({
-  title,
-  icon,
-  headerAction,
-  children,
-}: {
-  title: string;
-  icon?: ReactNode;
-  headerAction?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-          {icon}
-          {title}
-        </h2>
-        {headerAction}
-      </div>
-      <div className="relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-xs/5 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function SettingsRow({
-  title,
-  description,
-  status,
-  resetAction,
-  control,
-  children,
-}: {
-  title: ReactNode;
-  description: string;
-  status?: ReactNode;
-  resetAction?: ReactNode;
-  control?: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="border-t border-border px-4 py-4 first:border-t-0 sm:px-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {resetAction}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">{description}</p>
-          {status ? <div className="pt-1 text-[11px] text-muted-foreground">{status}</div> : null}
-        </div>
-        {control ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {control}
-          </div>
-        ) : null}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function SettingResetButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={`Reset ${label} to default`}
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-            onClick={(event) => {
-              event.stopPropagation();
-              onClick();
-            }}
-          >
-            <Undo2Icon className="size-3" />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">Reset to default</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function SettingsPageContainer({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">{children}</div>
-    </div>
-  );
-}
-
 function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
@@ -335,8 +243,42 @@ function AboutVersionTitle() {
 function AboutVersionSection() {
   const queryClient = useQueryClient();
   const updateStateQuery = useDesktopUpdateState();
+  const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
 
   const updateState = updateStateQuery.data ?? null;
+  const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
+  const selectedUpdateChannel = updateState?.channel ?? "latest";
+
+  const handleUpdateChannelChange = useCallback(
+    (channel: DesktopUpdateChannel) => {
+      const bridge = window.desktopBridge;
+      if (
+        !bridge ||
+        typeof bridge.setUpdateChannel !== "function" ||
+        channel === selectedUpdateChannel
+      ) {
+        return;
+      }
+
+      setIsChangingUpdateChannel(true);
+      void bridge
+        .setUpdateChannel(channel)
+        .then((state) => {
+          setDesktopUpdateStateQueryData(queryClient, state);
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not change update track",
+            description: error instanceof Error ? error.message : "Update track change failed.",
+          });
+        })
+        .finally(() => {
+          setIsChangingUpdateChannel(false);
+        });
+    },
+    [queryClient, selectedUpdateChannel],
+  );
 
   const handleButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -426,27 +368,59 @@ function AboutVersionSection() {
       : "Current version of the application.";
 
   return (
-    <SettingsRow
-      title={<AboutVersionTitle />}
-      description={description}
-      control={
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="xs"
-                variant={action === "install" ? "default" : "outline"}
-                disabled={buttonDisabled}
-                onClick={handleButtonClick}
-              >
-                {buttonLabel}
-              </Button>
-            }
-          />
-          {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
-        </Tooltip>
-      }
-    />
+    <>
+      <SettingsRow
+        title={<AboutVersionTitle />}
+        description={description}
+        control={
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant={action === "install" ? "default" : "outline"}
+                  disabled={buttonDisabled}
+                  onClick={handleButtonClick}
+                >
+                  {buttonLabel}
+                </Button>
+              }
+            />
+            {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
+          </Tooltip>
+        }
+      />
+      <SettingsRow
+        title="Update track"
+        description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
+        control={
+          <Select
+            value={selectedUpdateChannel}
+            onValueChange={(value) => {
+              handleUpdateChannelChange(value as DesktopUpdateChannel);
+            }}
+          >
+            <SelectTrigger
+              className="w-full sm:w-40"
+              aria-label="Update track"
+              disabled={!hasDesktopBridge || isChangingUpdateChannel}
+            >
+              <SelectValue>
+                {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="latest">
+                Stable
+              </SelectItem>
+              <SelectItem hideIndicator value="nightly">
+                Nightly
+              </SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+    </>
   );
 }
 
@@ -480,6 +454,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
+        ? ["Add project base directory"]
+        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -494,6 +471,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       isGitWritingModelDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -504,8 +482,8 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
-    const api = readNativeApi();
-    const confirmed = await (api ?? ensureNativeApi()).dialogs.confirm(
+    const api = readLocalApi();
+    const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
         "\n",
       ),
@@ -569,7 +547,7 @@ export function GeneralSettingsPanel() {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setIsRefreshingProviders(true);
-    void ensureNativeApi()
+    void ensureLocalApi()
       .server.refreshProviders()
       .catch((error: unknown) => {
         console.warn("Failed to refresh providers", error);
@@ -584,6 +562,7 @@ export function GeneralSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
+  const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
     const exports: string[] = [];
@@ -628,7 +607,7 @@ export function GeneralSettingsPanel() {
         return;
       }
 
-      void ensureNativeApi()
+      void ensureLocalApi()
         .shell.openInEditor(path, editor)
         .catch((error) => {
           setOpenPathErrorByTarget((existing) => ({
@@ -769,10 +748,10 @@ export function GeneralSettingsPanel() {
       title: providerSettings.title,
       binaryPlaceholder: providerSettings.binaryPlaceholder,
       binaryDescription: providerSettings.binaryDescription,
+      homePathKey: providerSettings.homePathKey,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
       binaryPathValue: providerConfig.binaryPath,
-      homePathValue: "homePath" in providerConfig ? providerConfig.homePath : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -790,6 +769,7 @@ export function GeneralSettingsPanel() {
           serverProviders[0]!.checkedAt,
         )
       : null;
+
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
@@ -961,6 +941,34 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Add project starts in"
+          description='Leave empty to use "~/" when the Add Project browser opens.'
+          resetAction={
+            settings.addProjectBaseDirectory !==
+            DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
+              <SettingResetButton
+                label="add project base directory"
+                onClick={() =>
+                  updateSettings({
+                    addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              className="w-full sm:w-72"
+              value={settings.addProjectBaseDirectory}
+              onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
+              placeholder="~/"
+              spellCheck={false}
+              aria-label="Add project base directory"
+            />
+          }
+        />
+
+        <SettingsRow
           title="Archive confirmation"
           description="Require a second click on the inline archive action before a thread is archived."
           resetAction={
@@ -1068,11 +1076,11 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(
-                          textGenProvider,
-                          textGenModel,
-                          nextOptions,
-                        ),
+                        textGenerationModelSelection: createModelSelection({
+                          provider: textGenProvider,
+                          model: textGenModel,
+                          ...(nextOptions !== undefined ? { options: nextOptions } : {}),
+                        }),
                       },
                       serverProviders,
                     ),
@@ -1251,27 +1259,25 @@ export function GeneralSettingsPanel() {
                       </label>
                     </div>
 
-                    {providerCard.homePlaceholder ? (
+                    {providerCard.homePathKey ? (
                       <div className="border-t border-border/60 px-4 py-3 sm:px-5">
                         <label
-                          htmlFor={`provider-install-${providerCard.provider}-home-path`}
+                          htmlFor={`provider-install-${providerCard.homePathKey}`}
                           className="block"
                         >
                           <span className="text-xs font-medium text-foreground">
-                            {providerCard.provider === "codex"
-                              ? "CODEX_HOME path"
-                              : `${providerDisplayName} home path`}
+                            CODEX_HOME path
                           </span>
                           <Input
-                            id={`provider-install-${providerCard.provider}-home-path`}
+                            id={`provider-install-${providerCard.homePathKey}`}
                             className="mt-1.5"
-                            value={providerCard.homePathValue}
+                            value={codexHomePath}
                             onChange={(event) =>
                               updateSettings({
                                 providers: {
                                   ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
+                                  codex: {
+                                    ...settings.providers.codex,
                                     homePath: event.target.value,
                                   },
                                 },
@@ -1497,12 +1503,11 @@ export function GeneralSettingsPanel() {
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useStore((store) => store.projects);
-  const threads = useStore((store) => store.threads);
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const archivedGroups = useMemo(() => {
-    const projectById = new Map(projects.map((project) => [project.id, project] as const));
-    return [...projectById.values()]
+    return projects
       .map((project) => ({
         project,
         threads: threads
@@ -1517,8 +1522,8 @@ export function ArchivedThreadsPanel() {
   }, [projects, threads]);
 
   const handleArchivedThreadContextMenu = useCallback(
-    async (threadId: ThreadId, position: { x: number; y: number }) => {
-      const api = readNativeApi();
+    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+      const api = readLocalApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
         [
@@ -1530,7 +1535,7 @@ export function ArchivedThreadsPanel() {
 
       if (clicked === "unarchive") {
         try {
-          await unarchiveThread(threadId);
+          await unarchiveThread(threadRef);
         } catch (error) {
           toastManager.add({
             type: "error",
@@ -1542,7 +1547,7 @@ export function ArchivedThreadsPanel() {
       }
 
       if (clicked === "delete") {
-        await confirmAndDeleteThread(threadId);
+        await confirmAndDeleteThread(threadRef);
       }
     },
     [confirmAndDeleteThread, unarchiveThread],
@@ -1567,7 +1572,7 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             title={project.name}
-            icon={<ProjectFavicon cwd={project.cwd} />}
+            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
           >
             {projectThreads.map((thread) => (
               <div
@@ -1575,10 +1580,13 @@ export function ArchivedThreadsPanel() {
                 className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  void handleArchivedThreadContextMenu(thread.id, {
-                    x: event.clientX,
-                    y: event.clientY,
-                  });
+                  void handleArchivedThreadContextMenu(
+                    scopeThreadRef(thread.environmentId, thread.id),
+                    {
+                      x: event.clientX,
+                      y: event.clientY,
+                    },
+                  );
                 }}
               >
                 <div className="min-w-0 flex-1">
@@ -1595,13 +1603,16 @@ export function ArchivedThreadsPanel() {
                   size="sm"
                   className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
                   onClick={() =>
-                    void unarchiveThread(thread.id).catch((error) => {
-                      toastManager.add({
-                        type: "error",
-                        title: "Failed to unarchive thread",
-                        description: error instanceof Error ? error.message : "An error occurred.",
-                      });
-                    })
+                    void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
+                      (error) => {
+                        toastManager.add({
+                          type: "error",
+                          title: "Failed to unarchive thread",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        });
+                      },
+                    )
                   }
                 >
                   <ArchiveX className="size-3.5" />

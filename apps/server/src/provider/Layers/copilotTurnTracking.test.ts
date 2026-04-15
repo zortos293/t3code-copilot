@@ -31,9 +31,9 @@ describe("copilotTurnTracking", () => {
 
   it("preserves usage details for the eventual turn completion event", () => {
     const state = makeState();
-    state.pendingTurnIds.push(TurnId.makeUnsafe("turn-1"));
+    state.pendingTurnIds.push(TurnId.make("turn-1"));
 
-    beginCopilotTurn(state, TurnId.makeUnsafe("provider-turn-1"));
+    beginCopilotTurn(state, TurnId.make("provider-turn-1"));
     recordTurnUsage(state, {
       model: "gpt-4.1",
       cost: 0.42,

@@ -73,37 +73,6 @@ export function deriveLatestContextWindowSnapshot(
   return null;
 }
 
-export function withContextWindowModelLimit(
-  usage: ContextWindowSnapshot | null,
-  modelMaxTokens: number | null | undefined,
-): ContextWindowSnapshot | null {
-  if (!usage) {
-    return null;
-  }
-
-  const normalizedModelMax =
-    typeof modelMaxTokens === "number" && Number.isFinite(modelMaxTokens) && modelMaxTokens > 0
-      ? modelMaxTokens
-      : null;
-  const resolvedMaxTokens = usage.maxTokens ?? normalizedModelMax;
-
-  if (resolvedMaxTokens === null || resolvedMaxTokens === usage.maxTokens) {
-    return usage;
-  }
-
-  const usedPercentage = Math.min(100, (usage.usedTokens / resolvedMaxTokens) * 100);
-  const remainingTokens = Math.max(0, Math.round(resolvedMaxTokens - usage.usedTokens));
-  const remainingPercentage = Math.max(0, 100 - usedPercentage);
-
-  return {
-    ...usage,
-    maxTokens: resolvedMaxTokens,
-    usedPercentage,
-    remainingTokens,
-    remainingPercentage,
-  };
-}
-
 export function formatContextWindowTokens(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
     return "0";
@@ -118,11 +87,4 @@ export function formatContextWindowTokens(value: number | null): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
-}
-
-export function formatContextWindowUsageLabel(usage: ContextWindowSnapshot): string {
-  if (usage.maxTokens !== null) {
-    return `${formatContextWindowTokens(usage.usedTokens)} / ${formatContextWindowTokens(usage.maxTokens ?? null)}`;
-  }
-  return `${formatContextWindowTokens(usage.usedTokens)} used`;
 }

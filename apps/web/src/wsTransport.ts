@@ -16,6 +16,7 @@ import {
   createWsRpcProtocolLayer,
   makeWsRpcProtocolClient,
   type WsRpcProtocolClient,
+  type WsRpcProtocolSocketUrlProvider,
 } from "./rpc/protocol";
 
 interface SubscribeOptions {
@@ -45,13 +46,13 @@ function formatErrorMessage(error: unknown): string {
 
 export class WsTransport {
   private readonly tracingReady: Promise<void>;
-  private readonly url: string | undefined;
+  private readonly url: WsRpcProtocolSocketUrlProvider;
   private disposed = false;
   private reconnectChain: Promise<void> = Promise.resolve();
   private session: TransportSession;
 
   constructor(url?: string) {
-    this.url = url;
+    this.url = url ?? resolveDefaultSocketUrl();
     this.tracingReady = configureClientTracing();
     this.session = this.createSession();
   }
@@ -262,4 +263,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function resolveDefaultSocketUrl(): string {
+  if (typeof window === "undefined") {
+    return "ws://localhost:3020";
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host =
+    window.location.host ||
+    [window.location.hostname, window.location.port].filter((part) => part.length > 0).join(":");
+
+  if (!host) {
+    throw new Error("Unable to resolve websocket host from window.location.");
+  }
+
+  return `${protocol}//${host}`;
 }

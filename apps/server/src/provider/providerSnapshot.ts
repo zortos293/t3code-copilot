@@ -2,6 +2,8 @@ import type {
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
   ServerProviderModel,
   ServerProviderQuotaSnapshot,
   ServerProviderState,
@@ -34,8 +36,7 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isCommandMissingCause(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+export function isCommandMissingCause(error: Error): boolean {
   const lower = error.message.toLowerCase();
   return lower.includes("enoent") || lower.includes("notfound");
 }
@@ -133,6 +134,8 @@ export function buildServerProvider(input: {
   enabled: boolean;
   checkedAt: string;
   models: ReadonlyArray<ServerProviderModel>;
+  slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
+  skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
 }): ServerProvider {
   return {
@@ -148,6 +151,8 @@ export function buildServerProvider(input: {
     ...(input.probe.quotaSnapshots && input.probe.quotaSnapshots.length > 0
       ? { quotaSnapshots: [...input.probe.quotaSnapshots] }
       : {}),
+    slashCommands: [...(input.slashCommands ?? [])],
+    skills: [...(input.skills ?? [])],
   };
 }
 

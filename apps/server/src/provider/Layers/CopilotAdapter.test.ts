@@ -15,7 +15,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
-const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
 class FakeCopilotSession {
   public readonly sessionId: string;

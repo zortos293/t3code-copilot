@@ -2,7 +2,7 @@ import { KeybindingCommand, KeybindingRule, KeybindingsConfig } from "@t3tools/c
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
 import { ServerConfig } from "./config";
 
 import {
@@ -146,6 +146,23 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           when: `${"!".repeat(300)}terminalFocus`,
         }),
       );
+    }),
+  );
+
+  it.effect("formats invalid resolved keybinding rules with the custom message", () =>
+    Effect.sync(() => {
+      const result = Schema.decodeUnknownExit(ResolvedKeybindingFromConfig)({
+        key: "mod+shift+d+o",
+        command: "terminal.new",
+      });
+
+      if (result._tag !== "Failure") {
+        assert.fail("Expected invalid keybinding decode to fail");
+      }
+
+      const detail = Cause.pretty(result.cause);
+      assert.isTrue(detail.includes("Invalid keybinding rule"));
+      assert.isFalse(detail.includes("Invalid data"));
     }),
   );
 
@@ -403,17 +420,18 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("fails when config path parent cannot be created", () =>
+  it.effect("fails when config directory is not writable", () =>
     Effect.gen(function* () {
+      if (typeof process.getuid === "function" && process.getuid() === 0) {
+        return;
+      }
       const fs = yield* FileSystem.FileSystem;
       const { keybindingsConfigPath } = yield* ServerConfig;
       const { dirname } = yield* Path.Path;
-      const configDir = dirname(keybindingsConfigPath);
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
         { key: "mod+j", command: "terminal.toggle" },
       ]);
-      yield* fs.remove(configDir, { recursive: true, force: true });
-      yield* fs.writeFileString(configDir, "blocked");
+      yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
 
       const result = yield* Effect.gen(function* () {
         const keybindings = yield* Keybindings;
@@ -422,13 +440,9 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           command: "script.run-tests.run",
         });
       }).pipe(toDetailResult);
-      assertFailure(result, "failed to access keybindings config");
+      assertFailure(result, "failed to write keybindings config");
 
-      yield* fs.remove(configDir, { force: true });
-      yield* fs.makeDirectory(configDir, { recursive: true });
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
-      ]);
+      yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       const persistedView = persisted.map(({ key, command }) => ({ key, command }));

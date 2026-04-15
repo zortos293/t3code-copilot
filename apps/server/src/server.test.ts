@@ -5,6 +5,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  EventId,
   GitCommandError,
   KeybindingRule,
   MessageId,
@@ -29,6 +31,7 @@ import {
   FileSystem,
   Layer,
   ManagedRuntime,
+  Option,
   Path,
   Stream,
 } from "effect";
@@ -41,6 +44,7 @@ import {
 } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vitest";
 
 import type { ServerConfigShape } from "./config.ts";
@@ -54,6 +58,10 @@ import {
 import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster.ts";
+import {
+  GitStatusBroadcaster,
+  type GitStatusBroadcasterShape,
+} from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
 import { Open, type OpenShape } from "./open.ts";
 import {
@@ -65,7 +73,7 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { PersistenceSqlError } from "./persistence/Errors.ts";
+import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -83,17 +91,39 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import {
+  RepositoryIdentityResolver,
+  type RepositoryIdentityResolverShape,
+} from "./project/Services/RepositoryIdentityResolver.ts";
+import {
+  ServerEnvironment,
+  type ServerEnvironmentShape,
+} from "./environment/Services/ServerEnvironment.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
+import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 
-const defaultProjectId = ProjectId.makeUnsafe("project-default");
-const defaultThreadId = ThreadId.makeUnsafe("thread-default");
+const defaultProjectId = ProjectId.make("project-default");
+const defaultThreadId = ThreadId.make("thread-default");
+const defaultDesktopBootstrapToken = "test-desktop-bootstrap-token";
 const defaultModelSelection = {
   provider: "codex",
   model: "gpt-5-codex",
 } as const;
-
+const testEnvironmentDescriptor = {
+  environmentId: EnvironmentId.make("environment-test"),
+  label: "Test environment",
+  platform: {
+    os: "darwin" as const,
+    arch: "arm64" as const,
+  },
+  serverVersion: "0.0.0-test",
+  capabilities: {
+    repositoryIdentity: true,
+  },
+};
 const makeDefaultOrchestrationReadModel = () => {
   const now = new Date().toISOString();
   return {
@@ -150,6 +180,11 @@ const browserOtlpTracingLayer = Layer.mergeAll(
   FetchHttpClient.layer,
   OtlpSerialization.layerJson,
   Layer.succeed(HttpClient.TracerDisabledWhen, () => true),
+);
+
+const authTestLayer = ServerAuthLive.pipe(
+  Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(ServerSecretStoreLive),
 );
 
 const makeBrowserOtlpPayload = (spanName: string) =>
@@ -262,6 +297,7 @@ const buildAppUnderTest = (options?: {
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
     gitManager?: Partial<GitManagerShape>;
+    gitStatusBroadcaster?: Partial<GitStatusBroadcasterShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
@@ -270,6 +306,8 @@ const buildAppUnderTest = (options?: {
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    serverEnvironment?: Partial<ServerEnvironmentShape>;
+    repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -289,7 +327,7 @@ const buildAppUnderTest = (options?: {
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",
-      mode: "web",
+      mode: "desktop",
       port: 0,
       host: "127.0.0.1",
       cwd: process.cwd(),
@@ -298,7 +336,8 @@ const buildAppUnderTest = (options?: {
       staticDir: undefined,
       devUrl,
       noBrowser: true,
-      authToken: undefined,
+      startupPresentation: "browser",
+      desktopBootstrapToken: defaultDesktopBootstrapToken,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
       ...options?.config,
@@ -307,14 +346,22 @@ const buildAppUnderTest = (options?: {
     const gitManagerLayer = Layer.mock(GitManager)({
       ...options?.layers?.gitManager,
     });
-    const gitStatusBroadcasterLayer = GitStatusBroadcasterLive.pipe(Layer.provide(gitManagerLayer));
+    const gitStatusBroadcasterLayer = options?.layers?.gitStatusBroadcaster
+      ? Layer.mock(GitStatusBroadcaster)({
+          ...options.layers.gitStatusBroadcaster,
+        })
+      : GitStatusBroadcasterLive.pipe(Layer.provide(gitManagerLayer));
 
-    const appLayer = HttpRouter.serve(makeRoutesLayer, {
+    const servedRoutesLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
       disableLogger: true,
     }).pipe(
       Layer.provide(
         Layer.mock(Keybindings)({
+          loadConfigState: Effect.succeed({
+            keybindings: [],
+            issues: [],
+          }),
           streamChanges: Stream.empty,
           ...options?.layers?.keybindings,
         }),
@@ -372,6 +419,20 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery)({
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              snapshotSequence: 0,
+              projects: [],
+              threads: [],
+              updatedAt: new Date(0).toISOString(),
+            }),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           ...options?.layers?.projectionSnapshotQuery,
         }),
       ),
@@ -394,6 +455,9 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.checkpointDiffQuery,
         }),
       ),
+    );
+
+    const appLayer = servedRoutesLayer.pipe(
       Layer.provide(
         Layer.mock(BrowserTraceCollector)({
           record: () => Effect.void,
@@ -416,6 +480,20 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.serverRuntimeStartup,
         }),
       ),
+      Layer.provide(
+        Layer.mock(ServerEnvironment)({
+          getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
+          getDescriptor: Effect.succeed(testEnvironmentDescriptor),
+          ...options?.layers?.serverEnvironment,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(RepositoryIdentityResolver)({
+          resolve: () => Effect.succeed(null),
+          ...options?.layers?.repositoryIdentityResolver,
+        }),
+      ),
+      Layer.provideMerge(authTestLayer),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -425,11 +503,37 @@ const buildAppUnderTest = (options?: {
     return config;
   });
 
-const wsRpcProtocolLayer = (wsUrl: string) =>
-  RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(NodeSocket.layerWebSocket(wsUrl)),
+const parseSessionCookieFromWsUrl = (
+  wsUrl: string,
+): { readonly cookie: string | null; readonly url: string } => {
+  const next = new URL(wsUrl);
+  const cookie = next.hash.startsWith("#cookie=")
+    ? decodeURIComponent(next.hash.slice("#cookie=".length))
+    : null;
+  next.hash = "";
+  return {
+    cookie,
+    url: next.toString(),
+  };
+};
+
+const wsRpcProtocolLayer = (wsUrl: string) => {
+  const { cookie, url } = parseSessionCookieFromWsUrl(wsUrl);
+  const webSocketConstructorLayer = Layer.succeed(
+    Socket.WebSocketConstructor,
+    (socketUrl, protocols) =>
+      new NodeSocket.NodeWS.WebSocket(
+        socketUrl,
+        protocols,
+        cookie ? { headers: { cookie } } : undefined,
+      ) as unknown as globalThis.WebSocket,
+  );
+
+  return RpcClient.layerProtocolSocket().pipe(
+    Layer.provide(Socket.layerWebSocket(url).pipe(Layer.provide(webSocketConstructorLayer))),
     Layer.provide(RpcSerialization.layerJson),
   );
+};
 
 const makeWsRpcClient = RpcClient.make(WsRpcGroup);
 type WsRpcClient =
@@ -440,6 +544,13 @@ const withWsRpcClient = <A, E, R>(
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
 ) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
 
+const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
+  const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
+  const next = new URL(url, "http://localhost");
+  next.hash = `cookie=${encodeURIComponent(sessionCookieHeader)}`;
+  return isAbsoluteUrl ? next.toString() : `${next.pathname}${next.search}${next.hash}`;
+};
+
 const getHttpServerUrl = (pathname = "") =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
@@ -447,11 +558,130 @@ const getHttpServerUrl = (pathname = "") =>
     return `http://127.0.0.1:${address.port}${pathname}`;
   });
 
-const getWsServerUrl = (pathname = "") =>
+const bootstrapBrowserSession = (
+  credential = defaultDesktopBootstrapToken,
+  options?: {
+    readonly headers?: Record<string, string>;
+  },
+) =>
+  Effect.gen(function* () {
+    const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap");
+    const response = yield* Effect.promise(() =>
+      fetch(bootstrapUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...options?.headers,
+        },
+        body: JSON.stringify({
+          credential,
+        }),
+      }),
+    );
+    const body = (yield* Effect.promise(() => response.json())) as {
+      readonly authenticated: boolean;
+      readonly sessionMethod: string;
+      readonly expiresAt: string;
+    };
+    return {
+      response,
+      body,
+      cookie: response.headers.get("set-cookie"),
+    };
+  });
+
+const bootstrapBearerSession = (credential = defaultDesktopBootstrapToken) =>
+  Effect.gen(function* () {
+    const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap/bearer");
+    const response = yield* Effect.promise(() =>
+      fetch(bootstrapUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          credential,
+        }),
+      }),
+    );
+    const body = (yield* Effect.promise(() => response.json())) as {
+      readonly authenticated: boolean;
+      readonly sessionMethod: string;
+      readonly expiresAt: string;
+      readonly sessionToken?: string;
+      readonly error?: string;
+    };
+    return {
+      response,
+      body,
+    };
+  });
+
+const getAuthenticatedSessionCookieHeader = (credential = defaultDesktopBootstrapToken) =>
+  Effect.gen(function* () {
+    const { response, cookie } = yield* bootstrapBrowserSession(credential);
+    if (!response.ok) {
+      return yield* Effect.fail(
+        new Error(`Expected bootstrap session response to succeed, got ${response.status}`),
+      );
+    }
+
+    if (!cookie) {
+      return yield* Effect.fail(new Error("Expected bootstrap session response to set a cookie."));
+    }
+
+    return cookie.split(";")[0] ?? cookie;
+  });
+
+const getAuthenticatedBearerSessionToken = (credential = defaultDesktopBootstrapToken) =>
+  Effect.gen(function* () {
+    const { response, body } = yield* bootstrapBearerSession(credential);
+    if (!response.ok) {
+      return yield* Effect.fail(
+        new Error(`Expected bearer bootstrap response to succeed, got ${response.status}`),
+      );
+    }
+
+    if (!body.sessionToken) {
+      return yield* Effect.fail(
+        new Error("Expected bearer bootstrap response to include a session token."),
+      );
+    }
+
+    return body.sessionToken;
+  });
+
+const extractSessionTokenFromSetCookie = (cookieHeader: string): string => {
+  const [nameValue] = cookieHeader.split(";", 1);
+  const token = nameValue?.split("=", 2)[1];
+  if (!token) {
+    throw new Error("Expected session cookie header to contain a token value.");
+  }
+  return token;
+};
+
+const splitHeaderTokens = (value: string | null) =>
+  (value ?? "")
+    .split(",")
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .toSorted();
+
+const getWsServerUrl = (
+  pathname = "",
+  options?: { authenticated?: boolean; credential?: string },
+) =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
     const address = server.address as HttpServer.TcpAddress;
-    return `ws://127.0.0.1:${address.port}${pathname}`;
+    const baseUrl = `ws://127.0.0.1:${address.port}${pathname}`;
+    if (options?.authenticated === false) {
+      return baseUrl;
+    }
+    return appendSessionCookieToWsUrl(
+      baseUrl,
+      yield* getAuthenticatedSessionCookieHeader(options?.credential),
+    );
   });
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
@@ -477,11 +707,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         config: { devUrl: new URL("http://127.0.0.1:5173") },
       });
 
-      const url = yield* getHttpServerUrl("/foo/bar");
+      const url = yield* getHttpServerUrl("/foo/bar?token=test-token");
       const response = yield* Effect.promise(() => fetch(url, { redirect: "manual" }));
 
       assert.equal(response.status, 302);
-      assert.equal(response.headers.get("location"), "http://127.0.0.1:5173/");
+      assert.equal(
+        response.headers.get("location"),
+        "http://127.0.0.1:5173/foo/bar?token=test-token",
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -503,6 +736,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const response = yield* HttpClient.get(
         `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
+        {
+          headers: {
+            cookie: yield* getAuthenticatedSessionCookieHeader(),
+          },
+        },
       );
 
       assert.equal(response.status, 200);
@@ -523,11 +761,607 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const response = yield* HttpClient.get(
         `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}`,
+        {
+          headers: {
+            cookie: yield* getAuthenticatedSessionCookieHeader(),
+          },
+        },
       );
 
       assert.equal(response.status, 200);
       assert.include(yield* response.text, 'data-fallback="project-favicon"');
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("serves the public environment descriptor without requiring auth", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const url = yield* getHttpServerUrl("/.well-known/t3/environment");
+      const response = yield* Effect.promise(() => fetch(url));
+      const body = (yield* Effect.promise(() =>
+        response.json(),
+      )) as typeof testEnvironmentDescriptor;
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(body, testEnvironmentDescriptor);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reports unauthenticated session state without requiring auth", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const url = yield* getHttpServerUrl("/api/auth/session");
+      const response = yield* Effect.promise(() => fetch(url));
+      const body = (yield* Effect.promise(() => response.json())) as {
+        readonly authenticated: boolean;
+        readonly auth: {
+          readonly policy: string;
+          readonly bootstrapMethods: ReadonlyArray<string>;
+          readonly sessionMethods: ReadonlyArray<string>;
+          readonly sessionCookieName: string;
+        };
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(body.authenticated, false);
+      assert.equal(body.auth.policy, "desktop-managed-local");
+      assert.deepEqual(body.auth.bootstrapMethods, ["desktop-bootstrap"]);
+      assert.deepEqual(body.auth.sessionMethods, [
+        "browser-session-cookie",
+        "bearer-session-token",
+      ]);
+      assert.isTrue(body.auth.sessionCookieName.startsWith("t3_session_"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("bootstraps a browser session and authenticates the session endpoint via cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const {
+        response: bootstrapResponse,
+        body: bootstrapBody,
+        cookie: setCookie,
+      } = yield* bootstrapBrowserSession();
+
+      assert.equal(bootstrapResponse.status, 200);
+      assert.equal(bootstrapBody.authenticated, true);
+      assert.equal(bootstrapBody.sessionMethod, "browser-session-cookie");
+      assert.isUndefined((bootstrapBody as { readonly sessionToken?: string }).sessionToken);
+      assert.isDefined(setCookie);
+
+      const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+      const sessionResponse = yield* Effect.promise(() =>
+        fetch(sessionUrl, {
+          headers: {
+            cookie: setCookie?.split(";")[0] ?? "",
+          },
+        }),
+      );
+      const sessionBody = (yield* Effect.promise(() => sessionResponse.json())) as {
+        readonly authenticated: boolean;
+        readonly sessionMethod?: string;
+      };
+
+      assert.equal(sessionResponse.status, 200);
+      assert.equal(sessionBody.authenticated, true);
+      assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "bootstraps a bearer session and authenticates the session endpoint via authorization header",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const { response: bootstrapResponse, body: bootstrapBody } =
+          yield* bootstrapBearerSession();
+
+        assert.equal(bootstrapResponse.status, 200);
+        assert.equal(bootstrapBody.authenticated, true);
+        assert.equal(bootstrapBody.sessionMethod, "bearer-session-token");
+        assert.equal(typeof bootstrapBody.sessionToken, "string");
+        assert.isTrue((bootstrapBody.sessionToken?.length ?? 0) > 0);
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const sessionResponse = yield* Effect.promise(() =>
+          fetch(sessionUrl, {
+            headers: {
+              authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
+            },
+          }),
+        );
+        const sessionBody = (yield* Effect.promise(() => sessionResponse.json())) as {
+          readonly authenticated: boolean;
+          readonly sessionMethod?: string;
+        };
+
+        assert.equal(sessionResponse.status, 200);
+        assert.equal(sessionBody.authenticated, true);
+        assert.equal(sessionBody.sessionMethod, "bearer-session-token");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues short-lived websocket tokens for authenticated bearer sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const bearerToken = yield* getAuthenticatedBearerSessionToken();
+      const wsTokenUrl = yield* getHttpServerUrl("/api/auth/ws-token");
+      const wsTokenResponse = yield* Effect.promise(() =>
+        fetch(wsTokenUrl, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${bearerToken}`,
+          },
+        }),
+      );
+      const wsTokenBody = (yield* Effect.promise(() => wsTokenResponse.json())) as {
+        readonly token: string;
+        readonly expiresAt: string;
+      };
+
+      assert.equal(wsTokenResponse.status, 200);
+      assert.equal(typeof wsTokenBody.token, "string");
+      assert.isTrue(wsTokenBody.token.length > 0);
+      assert.equal(typeof wsTokenBody.expiresAt, "string");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "responds to remote auth websocket-token preflight requests with authorization CORS headers",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const wsTokenUrl = yield* getHttpServerUrl("/api/auth/ws-token");
+        const response = yield* Effect.promise(() =>
+          fetch(wsTokenUrl, {
+            method: "OPTIONS",
+            headers: {
+              origin: "http://192.168.86.35:3773",
+              "access-control-request-method": "POST",
+              "access-control-request-headers": "authorization",
+            },
+          }),
+        );
+
+        assert.equal(response.status, 204);
+        assert.equal(response.headers.get("access-control-allow-origin"), "*");
+        assert.deepEqual(splitHeaderTokens(response.headers.get("access-control-allow-methods")), [
+          "GET",
+          "OPTIONS",
+          "POST",
+        ]);
+        assert.deepEqual(splitHeaderTokens(response.headers.get("access-control-allow-headers")), [
+          "authorization",
+          "b3",
+          "content-type",
+          "traceparent",
+        ]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("includes CORS headers on remote websocket-token auth failures", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const wsTokenUrl = yield* getHttpServerUrl("/api/auth/ws-token");
+      const response = yield* Effect.promise(() =>
+        fetch(wsTokenUrl, {
+          method: "POST",
+          headers: {
+            origin: "http://192.168.86.35:3773",
+          },
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as {
+        readonly error?: string;
+      };
+
+      assert.equal(response.status, 401);
+      assert.equal(response.headers.get("access-control-allow-origin"), "*");
+      assert.equal(body.error, "Authentication required.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues authenticated one-time pairing credentials for additional clients", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+      });
+      const body = (yield* response.json) as {
+        readonly credential: string;
+        readonly expiresAt: string;
+      };
+
+      assert.equal(response.status, 200);
+      assert.equal(typeof body.credential, "string");
+      assert.isTrue(body.credential.length > 0);
+      assert.equal(typeof body.expiresAt, "string");
+
+      const bootstrapResult = yield* bootstrapBrowserSession(body.credential);
+      assert.equal(bootstrapResult.response.status, 200);
+
+      const reusedResult = yield* bootstrapBrowserSession(body.credential);
+      assert.equal(reusedResult.response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects unauthenticated pairing credential requests", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const response = yield* HttpClient.post("/api/auth/pairing-token");
+      assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("lists and revokes pairing links for owner sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const createdBody = (yield* createdResponse.json) as {
+        readonly id: string;
+        readonly credential: string;
+      };
+
+      const listResponse = yield* HttpClient.get("/api/auth/pairing-links", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
+        readonly id: string;
+        readonly credential: string;
+      }>;
+
+      const revokeUrl = yield* getHttpServerUrl("/api/auth/pairing-links/revoke");
+      const revokeResponse = yield* Effect.promise(() =>
+        fetch(revokeUrl, {
+          method: "POST",
+          headers: {
+            cookie: ownerCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ id: createdBody.id }),
+        }),
+      );
+      const revokedBootstrap = yield* bootstrapBrowserSession(createdBody.credential);
+
+      assert.equal(createdResponse.status, 200);
+      assert.equal(listResponse.status, 200);
+      assert.isTrue(listedLinks.some((entry) => entry.id === createdBody.id));
+      assert.equal(revokeResponse.status, 200);
+      assert.equal(revokedBootstrap.response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects pairing credential requests from non-owner paired sessions", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+      });
+      const ownerBody = (yield* ownerResponse.json) as {
+        readonly credential: string;
+      };
+      assert.equal(ownerResponse.status, 200);
+
+      const pairedSessionCookie = yield* getAuthenticatedSessionCookieHeader(ownerBody.credential);
+      const pairedResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: pairedSessionCookie,
+        },
+      });
+      const pairedBody = (yield* pairedResponse.json) as {
+        readonly error: string;
+      };
+
+      assert.equal(pairedResponse.status, 403);
+      assert.equal(pairedBody.error, "Only owner sessions can create pairing credentials.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("lists paired clients and revokes other sessions while keeping the owner", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingTokenUrl = yield* getHttpServerUrl("/api/auth/pairing-token");
+      const ownerPairingResponse = yield* Effect.promise(() =>
+        fetch(pairingTokenUrl, {
+          method: "POST",
+          headers: {
+            cookie: ownerCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            label: "Julius iPhone",
+          }),
+        }),
+      );
+      const ownerPairingBody = (yield* Effect.promise(() => ownerPairingResponse.json())) as {
+        readonly credential: string;
+        readonly label?: string;
+      };
+      assert.equal(ownerPairingResponse.status, 200);
+      const pairedSessionBootstrap = yield* bootstrapBrowserSession(ownerPairingBody.credential, {
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+        },
+      });
+      const pairedSessionCookie = pairedSessionBootstrap.cookie?.split(";")[0];
+      assert.isDefined(pairedSessionCookie);
+
+      const pairedSessionCookieHeader = pairedSessionCookie ?? "";
+      const listClientsUrl = yield* getHttpServerUrl("/api/auth/clients");
+      const listBeforeResponse = yield* Effect.promise(() =>
+        fetch(listClientsUrl, {
+          headers: {
+            cookie: ownerCookie,
+          },
+        }),
+      );
+      const clientsBefore = (yield* Effect.promise(() =>
+        listBeforeResponse.json(),
+      )) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+        readonly client: {
+          readonly label?: string;
+          readonly deviceType: string;
+          readonly ipAddress?: string;
+          readonly os?: string;
+          readonly browser?: string;
+        };
+      }>;
+      const pairedClientBefore = clientsBefore.find((entry) => !entry.current);
+      const pairedSessionId = clientsBefore.find((entry) => !entry.current)?.sessionId;
+
+      const revokeOthersResponse = yield* HttpClient.post("/api/auth/clients/revoke-others", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const revokeOthersBody = (yield* revokeOthersResponse.json) as {
+        readonly revokedCount: number;
+      };
+
+      const listAfterResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clientsAfter = (yield* listAfterResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+      }>;
+
+      const pairedClientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: pairedSessionCookieHeader,
+        },
+      });
+      const pairedClientPairingBody = (yield* pairedClientPairingResponse.json) as {
+        readonly error: string;
+      };
+
+      assert.equal(listBeforeResponse.status, 200);
+      assert.equal(ownerPairingBody.label, "Julius iPhone");
+      assert.lengthOf(clientsBefore, 2);
+      assert.isDefined(pairedSessionId);
+      assert.isDefined(pairedClientBefore);
+      assert.deepInclude(pairedClientBefore?.client, {
+        label: "Julius iPhone",
+        deviceType: "mobile",
+        os: "iOS",
+        browser: "Safari",
+        ipAddress: "127.0.0.1",
+      });
+      assert.equal(revokeOthersResponse.status, 200);
+      assert.equal(revokeOthersBody.revokedCount, 1);
+      assert.equal(listAfterResponse.status, 200);
+      assert.lengthOf(clientsAfter, 1);
+      assert.equal(clientsAfter[0]?.current, true);
+      assert.equal(pairedClientPairingResponse.status, 401);
+      assert.equal(pairedClientPairingBody.error, "Unauthorized request.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("revokes an individual paired client session", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          host: "0.0.0.0",
+        },
+      });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
+        readonly credential: string;
+      };
+      const pairedSessionCookie = yield* getAuthenticatedSessionCookieHeader(
+        pairingBody.credential,
+      );
+
+      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
+        readonly sessionId: string;
+        readonly current: boolean;
+      }>;
+      const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
+      assert.isDefined(pairedSessionId);
+
+      const revokeUrl = yield* getHttpServerUrl("/api/auth/clients/revoke");
+      const revokeResponse = yield* Effect.promise(() =>
+        fetch(revokeUrl, {
+          method: "POST",
+          headers: {
+            cookie: ownerCookie,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ sessionId: pairedSessionId }),
+        }),
+      );
+      const pairedClientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: pairedSessionCookie,
+        },
+      });
+
+      assert.equal(revokeResponse.status, 200);
+      assert.equal(pairedClientPairingResponse.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects reusing the same bootstrap credential after it has been exchanged", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const first = yield* bootstrapBrowserSession();
+      const second = yield* bootstrapBrowserSession();
+
+      assert.equal(first.response.status, 200);
+      assert.equal(second.response.status, 401);
+      assert.equal(
+        (second.body as { readonly error?: string }).error,
+        "Invalid bootstrap credential.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "does not accept session tokens via query parameters on authenticated HTTP routes",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const projectDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-router-project-favicon-query-token-",
+        });
+
+        yield* buildAppUnderTest();
+
+        const { cookie } = yield* bootstrapBrowserSession();
+        assert.isDefined(cookie);
+        const sessionToken = extractSessionTokenFromSetCookie(cookie ?? "");
+
+        const response = yield* HttpClient.get(
+          `/api/project-favicon?cwd=${encodeURIComponent(projectDir)}&token=${encodeURIComponent(sessionToken)}`,
+        );
+
+        assert.equal(response.status, 401);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("accepts websocket rpc handshake with a bootstrapped browser session cookie", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const { response: bootstrapResponse, cookie } = yield* bootstrapBrowserSession();
+
+      assert.equal(bootstrapResponse.status, 200);
+      assert.isDefined(cookie);
+
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        cookie?.split(";")[0] ?? "",
+      );
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+      );
+
+      assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
+      assert.equal(response.auth.policy, "desktop-managed-local");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "rejects websocket rpc handshake when a session token is only provided via query string",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const { cookie } = yield* bootstrapBrowserSession();
+        assert.isDefined(cookie);
+        const sessionToken = extractSessionTokenFromSetCookie(cookie ?? "");
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?token=${encodeURIComponent(sessionToken)}`;
+
+        const error = yield* Effect.flip(
+          Effect.scoped(withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({}))),
+        );
+
+        assert.equal(error._tag, "RpcClientError");
+        assertInclude(String(error), "SocketOpenError");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "accepts websocket rpc handshake with a dedicated websocket token in the query string",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+
+        const bearerToken = yield* getAuthenticatedBearerSessionToken();
+        const wsTokenUrl = yield* getHttpServerUrl("/api/auth/ws-token");
+        const wsTokenResponse = yield* Effect.promise(() =>
+          fetch(wsTokenUrl, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${bearerToken}`,
+            },
+          }),
+        );
+        const wsTokenBody = (yield* Effect.promise(() => wsTokenResponse.json())) as {
+          readonly token: string;
+        };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsToken=${encodeURIComponent(wsTokenBody.token)}`;
+
+        const response = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
+        );
+
+        assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
+        assert.equal(response.auth.policy, "desktop-managed-local");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("serves attachment files from state dir", () =>
@@ -546,7 +1380,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* fileSystem.makeDirectory(path.dirname(attachmentPath), { recursive: true });
       yield* fileSystem.writeFileString(attachmentPath, "attachment-ok");
 
-      const response = yield* HttpClient.get(`/attachments/${attachmentId}`);
+      const response = yield* HttpClient.get(`/attachments/${attachmentId}`, {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+      });
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, "attachment-ok");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -569,6 +1407,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const response = yield* HttpClient.get(
         "/attachments/thread%20folder/message%20folder/file%20name.png",
+        {
+          headers: {
+            cookie: yield* getAuthenticatedSessionCookieHeader(),
+          },
+        },
       );
       assert.equal(response.status, 200);
       assert.equal(yield* response.text, "attachment-encoded-ok");
@@ -705,6 +1548,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const response = yield* HttpClient.post("/api/observability/v1/traces", {
         headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
           "content-type": "application/json",
           origin: "http://localhost:5733",
         },
@@ -778,8 +1622,17 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 204);
       assert.equal(response.headers.get("access-control-allow-origin"), "*");
-      assert.equal(response.headers.get("access-control-allow-methods"), "POST, OPTIONS");
-      assert.equal(response.headers.get("access-control-allow-headers"), "content-type");
+      assert.deepEqual(splitHeaderTokens(response.headers.get("access-control-allow-methods")), [
+        "GET",
+        "OPTIONS",
+        "POST",
+      ]);
+      assert.deepEqual(splitHeaderTokens(response.headers.get("access-control-allow-headers")), [
+        "authorization",
+        "b3",
+        "content-type",
+        "traceparent",
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -813,6 +1666,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
         const response = yield* HttpClient.post("/api/observability/v1/traces", {
           headers: {
+            cookie: yield* getAuthenticatedSessionCookieHeader(),
             "content-type": "application/json",
           },
           body: HttpBody.text(JSON.stringify(payload), "application/json"),
@@ -860,6 +1714,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const response = yield* HttpClient.get(
         "/attachments/missing-11111111-1111-4111-8111-111111111111",
+        {
+          headers: {
+            cookie: yield* getAuthenticatedSessionCookieHeader(),
+          },
+        },
       );
       assert.equal(response.status, 404);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -901,7 +1760,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("rejects websocket rpc handshake when auth token is missing", () =>
+  it.effect("rejects websocket rpc handshake when session authentication is missing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -911,13 +1770,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const needle = 1;",
       );
 
-      yield* buildAppUnderTest({
-        config: {
-          authToken: "secret-token",
-        },
-      });
+      yield* buildAppUnderTest();
 
-      const wsUrl = yield* getWsServerUrl("/ws");
+      const wsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.projectsSearchEntries]({
@@ -933,41 +1788,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("accepts websocket rpc handshake when auth token is provided", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-auth-ok-" });
-      yield* fs.writeFileString(
-        path.join(workspaceDir, "needle-file.ts"),
-        "export const needle = 1;",
-      );
-
-      yield* buildAppUnderTest({
-        config: {
-          authToken: "secret-token",
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws?token=secret-token");
-      const response = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.projectsSearchEntries]({
-            cwd: workspaceDir,
-            query: "needle",
-            limit: 10,
-          }),
-        ),
-      );
-
-      assert.isAtLeast(response.entries.length, 1);
-      assert.equal(response.truncated, false);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("routes websocket rpc subscribeServerConfig streams snapshot then update", () =>
     Effect.gen(function* () {
-      const providers = [] as const;
+      const providers = [
+        {
+          provider: "codex" as const,
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready" as const,
+          auth: { status: "authenticated" as const },
+          checkedAt: "2026-04-11T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ] as const;
       const changeEvent = {
         keybindings: [],
         issues: [],
@@ -1024,7 +1860,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc subscribeServerConfig emits provider status updates", () =>
     Effect.gen(function* () {
-      const providers = [] as const;
+      const nextProviders = [
+        {
+          provider: "codex" as const,
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready" as const,
+          auth: { status: "authenticated" as const },
+          checkedAt: "2026-04-11T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ] as const;
 
       yield* buildAppUnderTest({
         layers: {
@@ -1037,7 +1886,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
           providerRegistry: {
             getProviders: Effect.succeed([]),
-            streamChanges: Stream.succeed(providers),
+            streamChanges: Stream.succeed(nextProviders),
           },
         },
       });
@@ -1051,10 +1900,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       const [first, second] = Array.from(events);
       assert.equal(first?.type, "snapshot");
+      if (first?.type === "snapshot") {
+        assert.deepEqual(first.config.providers, []);
+      }
       assert.deepEqual(second, {
         version: 1,
         type: "providerStatuses",
-        payload: { providers },
+        payload: { providers: nextProviders },
       });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1069,6 +1921,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             sequence: 1,
             type: "welcome" as const,
             payload: {
+              environment: testEnvironmentDescriptor,
               cwd: "/tmp/project",
               projectName: "project",
             },
@@ -1078,7 +1931,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           version: 1 as const,
           sequence: 2,
           type: "ready" as const,
-          payload: { at: new Date().toISOString() },
+          payload: { at: new Date().toISOString(), environment: testEnvironmentDescriptor },
         });
 
         yield* buildAppUnderTest({
@@ -1183,6 +2036,40 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.relativePath, "nested/created.txt");
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("creates a missing workspace root during websocket project.create dispatch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-create-" });
+      const missingWorkspaceRoot = path.join(parentDir, "nested", "new-project");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "project.create",
+            commandId: CommandId.make("cmd-project-create-missing-root"),
+            projectId: ProjectId.make("project-create-missing-root"),
+            title: "New Project",
+            workspaceRoot: missingWorkspaceRoot,
+            createWorkspaceRootIfMissing: true,
+            defaultModelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            createdAt: new Date().toISOString(),
+          }),
+        ),
+      );
+      const stat = yield* fs.stat(missingWorkspaceRoot);
+
+      assert.isAtLeast(response.sequence, 0);
+      assert.equal(stat.type, "Directory");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -1884,7 +2771,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         updatedAt: now,
         projects: [
           {
-            id: ProjectId.makeUnsafe("project-a"),
+            id: ProjectId.make("project-a"),
             title: "Project A",
             workspaceRoot: "/tmp/project-a",
             defaultModelSelection,
@@ -1896,8 +2783,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ],
         threads: [
           {
-            id: ThreadId.makeUnsafe("thread-1"),
-            projectId: ProjectId.makeUnsafe("project-a"),
+            id: ThreadId.make("thread-1"),
+            projectId: ProjectId.make("project-a"),
             title: "Thread A",
             modelSelection: defaultModelSelection,
             interactionMode: "default" as const,
@@ -1930,14 +2817,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           checkpointDiffQuery: {
             getTurnDiff: () =>
               Effect.succeed({
-                threadId: ThreadId.makeUnsafe("thread-1"),
+                threadId: ThreadId.make("thread-1"),
                 fromTurnCount: 0,
                 toTurnCount: 1,
                 diff: "turn-diff",
               }),
             getFullThreadDiff: () =>
               Effect.succeed({
-                threadId: ThreadId.makeUnsafe("thread-1"),
+                threadId: ThreadId.make("thread-1"),
                 fromTurnCount: 0,
                 toTurnCount: 1,
                 diff: "full-diff",
@@ -1947,17 +2834,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-      const snapshotResult = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})),
-      );
-      assert.equal(snapshotResult.snapshotSequence, 1);
-
       const dispatchResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.session.stop",
-            commandId: CommandId.makeUnsafe("cmd-1"),
-            threadId: ThreadId.makeUnsafe("thread-1"),
+            commandId: CommandId.make("cmd-1"),
+            threadId: ThreadId.make("thread-1"),
             createdAt: now,
           }),
         ),
@@ -1967,7 +2849,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const turnDiffResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.getTurnDiff]({
-            threadId: ThreadId.makeUnsafe("thread-1"),
+            threadId: ThreadId.make("thread-1"),
             fromTurnCount: 0,
             toTurnCount: 1,
           }),
@@ -1978,7 +2860,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fullDiffResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.getFullThreadDiff]({
-            threadId: ThreadId.makeUnsafe("thread-1"),
+            threadId: ThreadId.make("thread-1"),
             toTurnCount: 1,
           }),
         ),
@@ -1996,9 +2878,76 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("enriches replayed project events with repository identity metadata", () =>
+    Effect.gen(function* () {
+      const repositoryIdentity = {
+        canonicalKey: "github.com/t3tools/t3code",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "git@github.com:T3Tools/t3code.git",
+        },
+        displayName: "T3Tools/t3code",
+        provider: "github",
+        owner: "T3Tools",
+        name: "t3code",
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            readEvents: (_fromSequenceExclusive) =>
+              Stream.make({
+                sequence: 1,
+                eventId: EventId.make("event-1"),
+                aggregateKind: "project",
+                aggregateId: defaultProjectId,
+                occurredAt: "2026-04-05T00:00:00.000Z",
+                commandId: null,
+                causationEventId: null,
+                correlationId: null,
+                metadata: {},
+                type: "project.created",
+                payload: {
+                  projectId: defaultProjectId,
+                  title: "Default Project",
+                  workspaceRoot: "/tmp/default-project",
+                  defaultModelSelection,
+                  scripts: [],
+                  createdAt: "2026-04-05T00:00:00.000Z",
+                  updatedAt: "2026-04-05T00:00:00.000Z",
+                },
+              } satisfies Extract<OrchestrationEvent, { type: "project.created" }>),
+          },
+          repositoryIdentityResolver: {
+            resolve: () => Effect.succeed(repositoryIdentity),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const replayResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.replayEvents]({
+            fromSequenceExclusive: 0,
+          }),
+        ),
+      );
+
+      const replayedEvent = replayResult[0];
+      assert.equal(replayedEvent?.type, "project.created");
+      assert.deepEqual(
+        replayedEvent && replayedEvent.type === "project.created"
+          ? replayedEvent.payload.repositoryIdentity
+          : null,
+        repositoryIdentity,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("closes thread terminals after a successful archive command", () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.makeUnsafe("thread-archive");
+      const threadId = ThreadId.make("thread-archive");
       const closeInputs: Array<Parameters<TerminalManagerShape["close"]>[0]> = [];
 
       yield* buildAppUnderTest({
@@ -2020,7 +2969,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.archive",
-            commandId: CommandId.makeUnsafe("cmd-thread-archive"),
+            commandId: CommandId.make("cmd-thread-archive"),
             threadId,
           }),
         ),
@@ -2036,6 +2985,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     () =>
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const refreshStatus = vi.fn((_: string) =>
+          Effect.succeed({
+            isRepo: true,
+            hasOriginRemote: true,
+            isDefaultBranch: false,
+            branch: "t3code/bootstrap-branch",
+            hasWorkingTreeChanges: false,
+            workingTree: {
+              files: [],
+              insertions: 0,
+              deletions: 0,
+            },
+            hasUpstream: true,
+            aheadCount: 0,
+            behindCount: 0,
+            pr: null,
+          }),
+        );
         const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
           Effect.succeed({
             worktree: {
@@ -2060,6 +3027,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             gitCore: {
               createWorktree,
             },
+            gitStatusBroadcaster: {
+              refreshStatus,
+            },
             orchestrationEngine: {
               dispatch: (command) =>
                 Effect.sync(() => {
@@ -2080,10 +3050,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           withWsRpcClient(wsUrl, (client) =>
             client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
               type: "thread.turn.start",
-              commandId: CommandId.makeUnsafe("cmd-bootstrap-turn-start"),
-              threadId: ThreadId.makeUnsafe("thread-bootstrap"),
+              commandId: CommandId.make("cmd-bootstrap-turn-start"),
+              threadId: ThreadId.make("thread-bootstrap"),
               message: {
-                messageId: MessageId.makeUnsafe("msg-bootstrap"),
+                messageId: MessageId.make("msg-bootstrap"),
                 role: "user",
                 text: "hello",
                 attachments: [],
@@ -2132,11 +3102,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           path: null,
         });
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
-          threadId: ThreadId.makeUnsafe("thread-bootstrap"),
+          threadId: ThreadId.make("thread-bootstrap"),
           projectId: defaultProjectId,
           projectCwd: "/tmp/project",
           worktreePath: "/tmp/bootstrap-worktree",
         });
+        assert.deepEqual(refreshStatus.mock.calls[0]?.[0], "/tmp/bootstrap-worktree");
 
         const setupActivities = dispatchedCommands.filter(
           (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -2195,10 +3166,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
-            commandId: CommandId.makeUnsafe("cmd-bootstrap-turn-start-setup-failure"),
-            threadId: ThreadId.makeUnsafe("thread-bootstrap-setup-failure"),
+            commandId: CommandId.make("cmd-bootstrap-turn-start-setup-failure"),
+            threadId: ThreadId.make("thread-bootstrap-setup-failure"),
             message: {
-              messageId: MessageId.makeUnsafe("msg-bootstrap-setup-failure"),
+              messageId: MessageId.make("msg-bootstrap-setup-failure"),
               role: "user",
               text: "hello",
               attachments: [],
@@ -2311,10 +3282,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
-            commandId: CommandId.makeUnsafe("cmd-bootstrap-turn-start-setup-activity-failure"),
-            threadId: ThreadId.makeUnsafe("thread-bootstrap-setup-activity-failure"),
+            commandId: CommandId.make("cmd-bootstrap-turn-start-setup-activity-failure"),
+            threadId: ThreadId.make("thread-bootstrap-setup-activity-failure"),
             message: {
-              messageId: MessageId.makeUnsafe("msg-bootstrap-setup-activity-failure"),
+              messageId: MessageId.make("msg-bootstrap-setup-activity-failure"),
               role: "user",
               text: "hello",
               attachments: [],
@@ -2394,10 +3365,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
-            commandId: CommandId.makeUnsafe("cmd-bootstrap-turn-start-defect"),
-            threadId: ThreadId.makeUnsafe("thread-bootstrap-defect"),
+            commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
+            threadId: ThreadId.make("thread-bootstrap-defect"),
             message: {
-              messageId: MessageId.makeUnsafe("msg-bootstrap-defect"),
+              messageId: MessageId.make("msg-bootstrap-defect"),
               role: "user",
               text: "hello",
               attachments: [],
@@ -2435,95 +3406,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         dispatchedCommands.map((command) => command.type),
         ["thread.create", "thread.delete"],
       );
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect(
-    "routes websocket rpc subscribeOrchestrationDomainEvents with replay/live overlap resilience",
-    () =>
-      Effect.gen(function* () {
-        const now = new Date().toISOString();
-        const threadId = ThreadId.makeUnsafe("thread-1");
-        let replayCursor: number | null = null;
-        const makeEvent = (sequence: number): OrchestrationEvent =>
-          ({
-            sequence,
-            eventId: `event-${sequence}`,
-            aggregateKind: "thread",
-            aggregateId: threadId,
-            occurredAt: now,
-            commandId: null,
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            type: "thread.reverted",
-            payload: {
-              threadId,
-              turnCount: sequence,
-            },
-          }) as OrchestrationEvent;
-
-        yield* buildAppUnderTest({
-          layers: {
-            orchestrationEngine: {
-              getReadModel: () =>
-                Effect.succeed({
-                  ...makeDefaultOrchestrationReadModel(),
-                  snapshotSequence: 1,
-                }),
-              readEvents: (fromSequenceExclusive) => {
-                replayCursor = fromSequenceExclusive;
-                return Stream.make(makeEvent(2), makeEvent(3));
-              },
-              streamDomainEvents: Stream.make(makeEvent(3), makeEvent(4)),
-            },
-          },
-        });
-
-        const wsUrl = yield* getWsServerUrl("/ws");
-        const events = yield* Effect.scoped(
-          withWsRpcClient(wsUrl, (client) =>
-            client[WS_METHODS.subscribeOrchestrationDomainEvents]({}).pipe(
-              Stream.take(3),
-              Stream.runCollect,
-            ),
-          ),
-        );
-
-        assert.equal(replayCursor, 1);
-        assert.deepEqual(
-          Array.from(events).map((event) => event.sequence),
-          [2, 3, 4],
-        );
-      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc orchestration.getSnapshot errors", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest({
-        layers: {
-          projectionSnapshotQuery: {
-            getSnapshot: () =>
-              Effect.fail(
-                new PersistenceSqlError({
-                  operation: "ProjectionSnapshotQuery.getSnapshot",
-                  detail: "projection unavailable",
-                }),
-              ),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})).pipe(
-          Effect.result,
-        ),
-      );
-
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
-      assertInclude(result.failure.message, "Failed to load orchestration snapshot");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

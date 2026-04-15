@@ -12,6 +12,7 @@ import {
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
+import { createModelSelection } from "./modelSelectionUtils";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
@@ -55,72 +56,6 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
 };
 
 export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
-
-type ModelSelectionForProvider<P extends ProviderKind> = Extract<ModelSelection, { provider: P }>;
-type ModelSelectionOptionsForProvider<P extends ProviderKind> = NonNullable<
-  ModelSelectionForProvider<P>["options"]
->;
-
-export function createModelSelection(
-  provider: "codex",
-  model: string,
-  options?: ModelSelectionOptionsForProvider<"codex">,
-): ModelSelectionForProvider<"codex">;
-export function createModelSelection(
-  provider: "copilot",
-  model: string,
-  options?: ModelSelectionOptionsForProvider<"copilot">,
-): ModelSelectionForProvider<"copilot">;
-export function createModelSelection(
-  provider: "claudeAgent",
-  model: string,
-  options?: ModelSelectionOptionsForProvider<"claudeAgent">,
-): ModelSelectionForProvider<"claudeAgent">;
-export function createModelSelection(
-  provider: ProviderKind,
-  model: string,
-  options?:
-    | ModelSelectionOptionsForProvider<"codex">
-    | ModelSelectionOptionsForProvider<"copilot">
-    | ModelSelectionOptionsForProvider<"claudeAgent">,
-): ModelSelection;
-export function createModelSelection(
-  provider: ProviderKind,
-  model: string,
-  options?:
-    | ModelSelectionOptionsForProvider<"codex">
-    | ModelSelectionOptionsForProvider<"copilot">
-    | ModelSelectionOptionsForProvider<"claudeAgent">,
-): ModelSelection {
-  if (provider === "codex") {
-    if (options === undefined) {
-      return { provider, model } as ModelSelectionForProvider<"codex">;
-    }
-    return {
-      provider,
-      model,
-      options: options as ModelSelectionOptionsForProvider<"codex">,
-    } as ModelSelectionForProvider<"codex">;
-  }
-  if (provider === "copilot") {
-    if (options === undefined) {
-      return { provider, model } as ModelSelectionForProvider<"copilot">;
-    }
-    return {
-      provider,
-      model,
-      options: options as ModelSelectionOptionsForProvider<"copilot">,
-    } as ModelSelectionForProvider<"copilot">;
-  }
-  if (options === undefined) {
-    return { provider, model } as ModelSelectionForProvider<"claudeAgent">;
-  }
-  return {
-    provider,
-    model,
-    options: options as ModelSelectionOptionsForProvider<"claudeAgent">,
-  } as ModelSelectionForProvider<"claudeAgent">;
-}
 
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
@@ -271,11 +206,9 @@ export function resolveAppModelSelectionState(
     },
   });
 
-  if (provider === "codex") {
-    return createModelSelection(provider, model, modelOptionsForDispatch);
-  }
-  if (provider === "copilot") {
-    return createModelSelection(provider, model, modelOptionsForDispatch);
-  }
-  return createModelSelection(provider, model, modelOptionsForDispatch);
+  return createModelSelection({
+    provider,
+    model,
+    ...(modelOptionsForDispatch !== undefined ? { options: modelOptionsForDispatch } : {}),
+  });
 }

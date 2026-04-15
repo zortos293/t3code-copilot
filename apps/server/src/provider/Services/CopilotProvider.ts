@@ -1,9 +1,9 @@
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 import type { ServerProviderShape } from "./ServerProvider";
 
 export interface CopilotProviderShape extends ServerProviderShape {}
 
-export class CopilotProvider extends ServiceMap.Service<CopilotProvider, CopilotProviderShape>()(
+export class CopilotProvider extends Context.Service<CopilotProvider, CopilotProviderShape>()(
   "t3/provider/Services/CopilotProvider",
 ) {}

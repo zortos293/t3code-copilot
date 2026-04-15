@@ -369,6 +369,20 @@ export const CopilotProviderLive = Layer.effect(
         Stream.map((settings) => settings.providers.copilot),
       ),
       haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
+      initialSnapshot: (settings) =>
+        buildServerProvider({
+          provider: PROVIDER,
+          enabled: settings.enabled,
+          checkedAt: new Date(0).toISOString(),
+          models: fallbackModels(settings),
+          probe: {
+            installed: false,
+            version: null,
+            status: "warning",
+            auth: { status: "unknown" },
+            message: "Checking GitHub Copilot availability…",
+          },
+        }),
       checkProvider,
     });
   }),

@@ -35,13 +35,13 @@ function makeActivity(overrides: {
 }): OrchestrationThreadActivity {
   const payload = overrides.payload ?? {};
   return {
-    id: EventId.makeUnsafe(overrides.id ?? crypto.randomUUID()),
+    id: EventId.make(overrides.id ?? crypto.randomUUID()),
     createdAt: overrides.createdAt ?? "2026-02-23T00:00:00.000Z",
     kind: overrides.kind ?? "tool.started",
     summary: overrides.summary ?? "Tool call",
     tone: overrides.tone ?? "tool",
     payload,
-    turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
+    turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
@@ -336,11 +336,35 @@ describe("deriveActivePlanState", () => {
       }),
     ];
 
-    expect(deriveActivePlanState(activities, TurnId.makeUnsafe("turn-1"))).toEqual({
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))).toEqual({
       createdAt: "2026-02-23T00:00:02.000Z",
       turnId: "turn-1",
       explanation: "Refined plan",
       steps: [{ step: "Implement Codex user input", status: "inProgress" }],
+    });
+  });
+
+  it("falls back to the most recent plan from a previous turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-from-turn-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [{ step: "Write tests", status: "completed" }],
+        },
+      }),
+    ];
+
+    // Current turn is turn-2, which has no plan activity — should fall back to turn-1's plan
+    const result = deriveActivePlanState(activities, TurnId.make("turn-2"));
+    expect(result).toEqual({
+      createdAt: "2026-02-23T00:00:01.000Z",
+      turnId: "turn-1",
+      steps: [{ step: "Write tests", status: "completed" }],
     });
   });
 });
@@ -352,7 +376,7 @@ describe("findLatestProposedPlan", () => {
         [
           {
             id: "plan:thread-1:turn:turn-1",
-            turnId: TurnId.makeUnsafe("turn-1"),
+            turnId: TurnId.make("turn-1"),
             planMarkdown: "# Older",
             implementedAt: null,
             implementationThreadId: null,
@@ -361,7 +385,7 @@ describe("findLatestProposedPlan", () => {
           },
           {
             id: "plan:thread-1:turn:turn-1",
-            turnId: TurnId.makeUnsafe("turn-1"),
+            turnId: TurnId.make("turn-1"),
             planMarkdown: "# Latest",
             implementedAt: null,
             implementationThreadId: null,
@@ -370,7 +394,7 @@ describe("findLatestProposedPlan", () => {
           },
           {
             id: "plan:thread-1:turn:turn-2",
-            turnId: TurnId.makeUnsafe("turn-2"),
+            turnId: TurnId.make("turn-2"),
             planMarkdown: "# Different turn",
             implementedAt: null,
             implementationThreadId: null,
@@ -378,7 +402,7 @@ describe("findLatestProposedPlan", () => {
             updatedAt: "2026-02-23T00:00:03.000Z",
           },
         ],
-        TurnId.makeUnsafe("turn-1"),
+        TurnId.make("turn-1"),
       ),
     ).toEqual({
       id: "plan:thread-1:turn:turn-1",
@@ -396,7 +420,7 @@ describe("findLatestProposedPlan", () => {
       [
         {
           id: "plan:thread-1:turn:turn-1",
-          turnId: TurnId.makeUnsafe("turn-1"),
+          turnId: TurnId.make("turn-1"),
           planMarkdown: "# First",
           implementedAt: null,
           implementationThreadId: null,
@@ -405,7 +429,7 @@ describe("findLatestProposedPlan", () => {
         },
         {
           id: "plan:thread-1:turn:turn-2",
-          turnId: TurnId.makeUnsafe("turn-2"),
+          turnId: TurnId.make("turn-2"),
           planMarkdown: "# Latest",
           implementedAt: null,
           implementationThreadId: null,
@@ -425,7 +449,7 @@ describe("hasActionableProposedPlan", () => {
     expect(
       hasActionableProposedPlan({
         id: "plan-1",
-        turnId: TurnId.makeUnsafe("turn-1"),
+        turnId: TurnId.make("turn-1"),
         planMarkdown: "# Plan",
         implementedAt: null,
         implementationThreadId: null,
@@ -439,10 +463,10 @@ describe("hasActionableProposedPlan", () => {
     expect(
       hasActionableProposedPlan({
         id: "plan-1",
-        turnId: TurnId.makeUnsafe("turn-1"),
+        turnId: TurnId.make("turn-1"),
         planMarkdown: "# Plan",
         implementedAt: "2026-02-23T00:00:02.000Z",
-        implementationThreadId: ThreadId.makeUnsafe("thread-implement"),
+        implementationThreadId: ThreadId.make("thread-implement"),
         createdAt: "2026-02-23T00:00:00.000Z",
         updatedAt: "2026-02-23T00:00:02.000Z",
       }),
@@ -456,25 +480,25 @@ describe("findSidebarProposedPlan", () => {
       findSidebarProposedPlan({
         threads: [
           {
-            id: ThreadId.makeUnsafe("thread-1"),
+            id: ThreadId.make("thread-1"),
             proposedPlans: [
               {
                 id: "plan-1",
-                turnId: TurnId.makeUnsafe("turn-plan"),
+                turnId: TurnId.make("turn-plan"),
                 planMarkdown: "# Source plan",
                 implementedAt: "2026-02-23T00:00:03.000Z",
-                implementationThreadId: ThreadId.makeUnsafe("thread-2"),
+                implementationThreadId: ThreadId.make("thread-2"),
                 createdAt: "2026-02-23T00:00:01.000Z",
                 updatedAt: "2026-02-23T00:00:02.000Z",
               },
             ],
           },
           {
-            id: ThreadId.makeUnsafe("thread-2"),
+            id: ThreadId.make("thread-2"),
             proposedPlans: [
               {
                 id: "plan-2",
-                turnId: TurnId.makeUnsafe("turn-other"),
+                turnId: TurnId.make("turn-other"),
                 planMarkdown: "# Latest elsewhere",
                 implementedAt: null,
                 implementationThreadId: null,
@@ -485,14 +509,14 @@ describe("findSidebarProposedPlan", () => {
           },
         ],
         latestTurn: {
-          turnId: TurnId.makeUnsafe("turn-implementation"),
+          turnId: TurnId.make("turn-implementation"),
           sourceProposedPlan: {
-            threadId: ThreadId.makeUnsafe("thread-1"),
+            threadId: ThreadId.make("thread-1"),
             planId: "plan-1",
           },
         },
         latestTurnSettled: false,
-        threadId: ThreadId.makeUnsafe("thread-1"),
+        threadId: ThreadId.make("thread-1"),
       }),
     ).toEqual({
       id: "plan-1",
@@ -510,11 +534,11 @@ describe("findSidebarProposedPlan", () => {
       findSidebarProposedPlan({
         threads: [
           {
-            id: ThreadId.makeUnsafe("thread-1"),
+            id: ThreadId.make("thread-1"),
             proposedPlans: [
               {
                 id: "plan-1",
-                turnId: TurnId.makeUnsafe("turn-plan"),
+                turnId: TurnId.make("turn-plan"),
                 planMarkdown: "# Older",
                 implementedAt: null,
                 implementationThreadId: null,
@@ -523,7 +547,7 @@ describe("findSidebarProposedPlan", () => {
               },
               {
                 id: "plan-2",
-                turnId: TurnId.makeUnsafe("turn-latest"),
+                turnId: TurnId.make("turn-latest"),
                 planMarkdown: "# Latest",
                 implementedAt: null,
                 implementationThreadId: null,
@@ -534,14 +558,14 @@ describe("findSidebarProposedPlan", () => {
           },
         ],
         latestTurn: {
-          turnId: TurnId.makeUnsafe("turn-implementation"),
+          turnId: TurnId.make("turn-implementation"),
           sourceProposedPlan: {
-            threadId: ThreadId.makeUnsafe("thread-1"),
+            threadId: ThreadId.make("thread-1"),
             planId: "plan-1",
           },
         },
         latestTurnSettled: true,
-        threadId: ThreadId.makeUnsafe("thread-1"),
+        threadId: ThreadId.make("thread-1"),
       })?.planMarkdown,
     ).toBe("# Latest");
   });
@@ -568,7 +592,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
-  it("omits task start and completion lifecycle entries", () => {
+  it("omits task.started but shows task.progress and task.completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "task-start",
@@ -594,7 +618,40 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities, undefined);
-    expect(entries.map((entry) => entry.id)).toEqual(["task-progress"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["task-progress", "task-complete"]);
+  });
+
+  it("uses payload summary as label for task entries when available", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-progress-with-summary",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "task.progress",
+        summary: "Reasoning update",
+        tone: "info",
+        payload: { summary: "Searching for API endpoints" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries[0]?.label).toBe("Searching for API endpoints");
+  });
+
+  it("uses payload detail as label for task.completed and preserves error tone", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "task-completed-failed",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "task.completed",
+        summary: "Task failed",
+        tone: "error",
+        payload: { detail: "Failed to deploy changes" },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities, undefined);
+    expect(entries[0]?.label).toBe("Failed to deploy changes");
+    expect(entries[0]?.tone).toBe("error");
   });
 
   it("filters by turn id when provided", () => {
@@ -609,7 +666,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({ id: "no-turn", summary: "Checkpoint captured", tone: "info" }),
     ];
 
-    const entries = deriveWorkLogEntries(activities, TurnId.makeUnsafe("turn-2"));
+    const entries = deriveWorkLogEntries(activities, TurnId.make("turn-2"));
     expect(entries.map((entry) => entry.id)).toEqual(["turn-2"]);
   });
 
@@ -1022,7 +1079,7 @@ describe("deriveTimelineEntries", () => {
     const entries = deriveTimelineEntries(
       [
         {
-          id: MessageId.makeUnsafe("message-1"),
+          id: MessageId.make("message-1"),
           role: "assistant",
           text: "hello",
           createdAt: "2026-02-23T00:00:01.000Z",
@@ -1032,7 +1089,7 @@ describe("deriveTimelineEntries", () => {
       [
         {
           id: "plan:thread-1:turn:turn-1",
-          turnId: TurnId.makeUnsafe("turn-1"),
+          turnId: TurnId.make("turn-1"),
           planMarkdown: "# Ship it",
           implementedAt: null,
           implementationThreadId: null,
@@ -1065,14 +1122,14 @@ describe("deriveTimelineEntries", () => {
     const entries = deriveTimelineEntries(
       [
         {
-          id: MessageId.makeUnsafe("assistant-earlier"),
+          id: MessageId.make("assistant-earlier"),
           role: "assistant",
           text: "progress update",
           createdAt: "2026-02-23T00:00:01.000Z",
           streaming: false,
         },
         {
-          id: MessageId.makeUnsafe("assistant-final"),
+          id: MessageId.make("assistant-final"),
           role: "assistant",
           text: "final answer",
           createdAt: "2026-02-23T00:00:01.000Z",
@@ -1085,7 +1142,7 @@ describe("deriveTimelineEntries", () => {
 
     expect(
       deriveCompletionDividerBeforeEntryId(entries, {
-        assistantMessageId: MessageId.makeUnsafe("assistant-final"),
+        assistantMessageId: MessageId.make("assistant-final"),
         startedAt: "2026-02-23T00:00:00.000Z",
         completedAt: "2026-02-23T00:00:02.000Z",
       }),
@@ -1112,7 +1169,7 @@ describe("deriveWorkLogEntries context window handling", () => {
           tone: "tool",
         }),
       ],
-      TurnId.makeUnsafe("turn-1"),
+      TurnId.make("turn-1"),
     );
 
     expect(entries).toHaveLength(1);
@@ -1130,7 +1187,7 @@ describe("deriveWorkLogEntries context window handling", () => {
           tone: "info",
         }),
       ],
-      TurnId.makeUnsafe("turn-1"),
+      TurnId.make("turn-1"),
     );
 
     expect(entries).toHaveLength(1);
@@ -1154,14 +1211,14 @@ describe("hasToolActivityForTurn", () => {
       makeActivity({ id: "info-1", turnId: "turn-2", kind: "turn.completed", tone: "info" }),
     ];
 
-    expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-1"))).toBe(true);
-    expect(hasToolActivityForTurn(activities, TurnId.makeUnsafe("turn-2"))).toBe(false);
+    expect(hasToolActivityForTurn(activities, TurnId.make("turn-1"))).toBe(true);
+    expect(hasToolActivityForTurn(activities, TurnId.make("turn-2"))).toBe(false);
   });
 });
 
 describe("isLatestTurnSettled", () => {
   const latestTurn = {
-    turnId: TurnId.makeUnsafe("turn-1"),
+    turnId: TurnId.make("turn-1"),
     startedAt: "2026-02-27T21:10:00.000Z",
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
@@ -1170,7 +1227,7 @@ describe("isLatestTurnSettled", () => {
     expect(
       isLatestTurnSettled(latestTurn, {
         orchestrationStatus: "running",
-        activeTurnId: TurnId.makeUnsafe("turn-1"),
+        activeTurnId: TurnId.make("turn-1"),
       }),
     ).toBe(false);
   });
@@ -1179,7 +1236,7 @@ describe("isLatestTurnSettled", () => {
     expect(
       isLatestTurnSettled(latestTurn, {
         orchestrationStatus: "running",
-        activeTurnId: TurnId.makeUnsafe("turn-2"),
+        activeTurnId: TurnId.make("turn-2"),
       }),
     ).toBe(false);
   });
@@ -1197,7 +1254,7 @@ describe("isLatestTurnSettled", () => {
     expect(
       isLatestTurnSettled(
         {
-          turnId: TurnId.makeUnsafe("turn-1"),
+          turnId: TurnId.make("turn-1"),
           startedAt: null,
           completedAt: "2026-02-27T21:10:06.000Z",
         },
@@ -1209,7 +1266,7 @@ describe("isLatestTurnSettled", () => {
 
 describe("deriveActiveWorkStartedAt", () => {
   const latestTurn = {
-    turnId: TurnId.makeUnsafe("turn-1"),
+    turnId: TurnId.make("turn-1"),
     startedAt: "2026-02-27T21:10:00.000Z",
     completedAt: "2026-02-27T21:10:06.000Z",
   } as const;
@@ -1220,11 +1277,24 @@ describe("deriveActiveWorkStartedAt", () => {
         latestTurn,
         {
           orchestrationStatus: "running",
-          activeTurnId: TurnId.makeUnsafe("turn-1"),
+          activeTurnId: TurnId.make("turn-1"),
         },
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
+  it("uses the new send start while the session is running a different turn", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-2"),
+        },
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
   });
 
   it("falls back to sendStartedAt once the latest turn is settled", () => {
@@ -1244,7 +1314,7 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
-          turnId: TurnId.makeUnsafe("turn-1"),
+          turnId: TurnId.make("turn-1"),
           startedAt: "2026-02-27T21:10:00.000Z",
           completedAt: "2026-02-27T21:10:06.000Z",
         },
@@ -1257,8 +1327,8 @@ describe("deriveActiveWorkStartedAt", () => {
 
 describe("PROVIDER_OPTIONS", () => {
   it("advertises Claude as available while keeping Cursor as a placeholder", () => {
-    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const copilot = PROVIDER_OPTIONS.find((option) => option.value === "copilot");
+    const claude = PROVIDER_OPTIONS.find((option) => option.value === "claudeAgent");
     const cursor = PROVIDER_OPTIONS.find((option) => option.value === "cursor");
     expect(PROVIDER_OPTIONS).toEqual([
       { value: "codex", label: "Codex", available: true },

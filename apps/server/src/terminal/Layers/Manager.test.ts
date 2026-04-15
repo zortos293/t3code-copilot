@@ -275,6 +275,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       fs.makeDirectory(filePath, { recursive: true }),
     );
 
+  const chmod = (filePath: string, mode: number) =>
+    Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) => fs.chmod(filePath, mode));
+
   const pathExists = (filePath: string) =>
     Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) => fs.exists(filePath));
 
@@ -288,12 +291,18 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
+      if (typeof process.getuid === "function" && process.getuid() === 0) {
+        return;
+      }
       const { manager, baseDir } = yield* createManager();
       const blockedRoot = path.join(baseDir, "blocked-root");
       const blockedCwd = path.join(blockedRoot, "cwd");
-      yield* writeFileString(blockedRoot, "not-a-directory");
+      yield* makeDirectory(blockedCwd);
+      yield* chmod(blockedRoot, 0o000);
 
-      const error = yield* Effect.flip(manager.open(openInput({ cwd: blockedCwd })));
+      const error = yield* Effect.flip(manager.open(openInput({ cwd: blockedCwd }))).pipe(
+        Effect.ensuring(chmod(blockedRoot, 0o755).pipe(Effect.ignore)),
+      );
 
       expect(error).toMatchObject({
         _tag: "TerminalCwdError",
