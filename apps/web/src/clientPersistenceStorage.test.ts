@@ -77,4 +77,26 @@ describe("clientPersistenceStorage", () => {
       ],
     });
   });
+
+  it("migrates partial legacy client settings by filling decoding defaults", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        confirmThreadArchive: true,
+        timestampFormat: "24-hour",
+      }),
+    );
+
+    const { readBrowserClientSettings } = await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toEqual({
+      confirmThreadArchive: true,
+      confirmThreadDelete: true,
+      diffWordWrap: false,
+      sidebarProjectSortOrder: "updated_at",
+      sidebarThreadSortOrder: "updated_at",
+      timestampFormat: "24-hour",
+    });
+  });
 });

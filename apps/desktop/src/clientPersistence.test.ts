@@ -75,6 +75,24 @@ describe("clientPersistence", () => {
     expect(readClientSettings(settingsPath)).toEqual(clientSettings);
   });
 
+  it("migrates partial persisted client settings with schema defaults", () => {
+    const settingsPath = makeTempPath("client-settings.json");
+    fs.writeFileSync(
+      settingsPath,
+      `${JSON.stringify({ settings: { confirmThreadArchive: true, timestampFormat: "24-hour" } })}\n`,
+      "utf8",
+    );
+
+    expect(readClientSettings(settingsPath)).toEqual({
+      confirmThreadArchive: true,
+      confirmThreadDelete: true,
+      diffWordWrap: false,
+      sidebarProjectSortOrder: "updated_at",
+      sidebarThreadSortOrder: "updated_at",
+      timestampFormat: "24-hour",
+    });
+  });
+
   it("persists and reloads saved environment metadata", () => {
     const registryPath = makeTempPath("saved-environments.json");
 

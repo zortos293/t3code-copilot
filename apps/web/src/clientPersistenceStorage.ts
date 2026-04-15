@@ -1,5 +1,6 @@
 import {
   ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   type ClientSettings,
   type EnvironmentId as EnvironmentIdValue,
@@ -55,7 +56,19 @@ export function readBrowserClientSettings(): ClientSettings | null {
   try {
     return getLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, ClientSettingsSchema);
   } catch {
-    return null;
+    try {
+      const raw = window.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw) as Partial<ClientSettings>;
+      return Schema.decodeSync(ClientSettingsSchema)({
+        ...DEFAULT_CLIENT_SETTINGS,
+        ...parsed,
+      });
+    } catch {
+      return null;
+    }
   }
 }
 

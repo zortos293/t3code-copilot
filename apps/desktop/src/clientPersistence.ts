@@ -1,7 +1,12 @@
 import * as FS from "node:fs";
 import * as Path from "node:path";
 
-import type { ClientSettings, PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import {
+  ClientSettingsSchema,
+  type ClientSettings,
+  type PersistedSavedEnvironmentRecord,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { Predicate } from "effect";
 
 interface ClientSettingsDocument {
@@ -83,7 +88,15 @@ function toPersistedSavedEnvironmentRecord(
 }
 
 export function readClientSettings(settingsPath: string): ClientSettings | null {
-  return readJsonFile<ClientSettingsDocument>(settingsPath)?.settings ?? null;
+  const settings = readJsonFile<ClientSettingsDocument>(settingsPath)?.settings;
+  if (!settings) {
+    return null;
+  }
+  try {
+    return Schema.decodeSync(ClientSettingsSchema)(settings);
+  } catch {
+    return null;
+  }
 }
 
 export function writeClientSettings(settingsPath: string, settings: ClientSettings): void {
