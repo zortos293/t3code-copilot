@@ -104,6 +104,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         status: cachedCodex.status,
         auth: cachedCodex.auth,
         checkedAt: cachedCodex.checkedAt,
+        quotaSnapshots: cachedCodex.quotaSnapshots,
         slashCommands: cachedCodex.slashCommands,
         skills: cachedCodex.skills,
         message: cachedCodex.message,

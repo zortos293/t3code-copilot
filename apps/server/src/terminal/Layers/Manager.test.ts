@@ -291,6 +291,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("preserves non-notFound cwd stat failures", () =>
     Effect.gen(function* () {
+      if (typeof process.getuid === "function" && process.getuid() === 0) {
+        return;
+      }
       const { manager, baseDir } = yield* createManager();
       const blockedRoot = path.join(baseDir, "blocked-root");
       const blockedCwd = path.join(blockedRoot, "cwd");
