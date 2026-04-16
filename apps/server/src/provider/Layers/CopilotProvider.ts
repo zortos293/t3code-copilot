@@ -97,6 +97,12 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     capabilities: DEFAULT_COPILOT_MODEL_CAPABILITIES,
   },
   {
+    slug: "claude-opus-4.7",
+    name: "Claude Opus 4.7",
+    isCustom: false,
+    capabilities: DEFAULT_COPILOT_MODEL_CAPABILITIES,
+  },
+  {
     slug: "claude-opus-4.6",
     name: "Claude Opus 4.6",
     isCustom: false,
