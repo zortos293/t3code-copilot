@@ -204,4 +204,71 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
 
       fs.rmSync(tempDir, { recursive: true, force: true });
     }));
+
+  it("rehydrates persisted copilot runtime rows", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-copilot");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "copilot",
+        adapterKey: "copilot",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: {
+          threadId: "copilot-thread",
+        },
+        runtimePayload: {
+          model: "gpt-5.4-mini",
+        },
+      });
+
+      const provider = yield* directory.getProvider(threadId);
+      assert.equal(provider, "copilot");
+
+      const binding = yield* directory.getBinding(threadId);
+      assertSome(binding, {
+        threadId,
+        provider: "copilot",
+        adapterKey: "copilot",
+        runtimeMode: "full-access",
+        status: "running",
+        resumeCursor: {
+          threadId: "copilot-thread",
+        },
+        runtimePayload: {
+          model: "gpt-5.4-mini",
+        },
+      });
+    }));
+
+  it("fails on unknown persisted providers", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-unknown-provider");
+
+      yield* runtimeRepository.upsert({
+        threadId,
+        providerName: "unknown-provider",
+        adapterKey: "unknown-provider",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: null,
+        runtimePayload: null,
+      });
+
+      const provider = yield* directory.getProvider(threadId).pipe(Effect.result);
+      assertFailure(
+        provider,
+        new ProviderSessionDirectoryPersistenceError({
+          operation: "ProviderSessionDirectory.getBinding",
+          detail: "Unknown persisted provider 'unknown-provider'.",
+        }),
+      );
+    }));
 });
