@@ -470,17 +470,41 @@ export function buildProjectUiSyncInputs(
   projects: ReturnType<typeof selectProjectsAcrossEnvironments>,
 ) {
   const projectGroupingSettings = getUnifiedSettingsSnapshot();
-  const inputsByLogicalProjectKey = new Map<string, { key: string; cwd: string }>();
-  for (const project of projects) {
-    const key = deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
-    if (!inputsByLogicalProjectKey.has(key)) {
-      inputsByLogicalProjectKey.set(key, {
-        key,
-        cwd: project.cwd,
-      });
+  const logicalProjectInputs = projects.map((project, index) => ({
+    key: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+    logicalId: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+    cwd: project.cwd,
+    incomingIndex: index,
+  }));
+  logicalProjectInputs.sort((left, right) => {
+    const byLogicalId = left.logicalId.localeCompare(right.logicalId);
+    if (byLogicalId !== 0) {
+      return byLogicalId;
+    }
+    const byCwd = left.cwd.localeCompare(right.cwd);
+    if (byCwd !== 0) {
+      return byCwd;
+    }
+    return left.incomingIndex - right.incomingIndex;
+  });
+
+  const inputsByLogicalProjectKey = new Map<
+    string,
+    { key: string; logicalId: string; cwd: string; incomingIndex: number }
+  >();
+  for (const input of logicalProjectInputs) {
+    if (!inputsByLogicalProjectKey.has(input.logicalId)) {
+      inputsByLogicalProjectKey.set(input.logicalId, input);
     }
   }
-  return [...inputsByLogicalProjectKey.values()];
+
+  return [...inputsByLogicalProjectKey.values()]
+    .toSorted((left, right) => left.incomingIndex - right.incomingIndex)
+    .map(({ key, logicalId, cwd }) => ({
+      key,
+      logicalId,
+      cwd,
+    }));
 }
 
 function syncProjectUiFromStore() {

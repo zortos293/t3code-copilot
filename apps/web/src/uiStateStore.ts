@@ -16,7 +16,9 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 ] as const;
 
 interface PersistedUiState {
+  expandedProjectLogicalIds?: string[];
   expandedProjectCwds?: string[];
+  projectOrderLogicalIds?: string[];
   projectOrderCwds?: string[];
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
 }
@@ -36,11 +38,20 @@ export interface UiState extends UiProjectState, UiThreadState {}
 export interface SyncProjectInput {
   key: string;
   cwd: string;
+  logicalId?: string | undefined;
 }
 
 export interface SyncThreadInput {
   key: string;
   seedVisitedAt?: string | undefined;
+}
+
+function appendUniqueString(target: string[], seen: Set<string>, value: string | undefined): void {
+  if (!value || value.length === 0 || seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  target.push(value);
 }
 
 const initialState: UiState = {
@@ -50,9 +61,12 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
 };
 
+const persistedExpandedProjectLogicalIds = new Set<string>();
 const persistedExpandedProjectCwds = new Set<string>();
+const persistedProjectOrderLogicalIds: string[] = [];
 const persistedProjectOrderCwds: string[] = [];
 const currentProjectCwdById = new Map<string, string>();
+const currentProjectLogicalIdById = new Map<string, string>();
 let legacyKeysCleanedUp = false;
 
 function readPersistedState(): UiState {
@@ -114,11 +128,27 @@ function sanitizePersistedThreadChangedFilesExpanded(
 }
 
 function hydratePersistedProjectState(parsed: PersistedUiState): void {
+  persistedExpandedProjectLogicalIds.clear();
   persistedExpandedProjectCwds.clear();
+  persistedProjectOrderLogicalIds.length = 0;
   persistedProjectOrderCwds.length = 0;
+  for (const logicalId of parsed.expandedProjectLogicalIds ?? []) {
+    if (typeof logicalId === "string" && logicalId.length > 0) {
+      persistedExpandedProjectLogicalIds.add(logicalId);
+    }
+  }
   for (const cwd of parsed.expandedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
       persistedExpandedProjectCwds.add(cwd);
+    }
+  }
+  for (const logicalId of parsed.projectOrderLogicalIds ?? []) {
+    if (
+      typeof logicalId === "string" &&
+      logicalId.length > 0 &&
+      !persistedProjectOrderLogicalIds.includes(logicalId)
+    ) {
+      persistedProjectOrderLogicalIds.push(logicalId);
     }
   }
   for (const cwd of parsed.projectOrderCwds ?? []) {
@@ -133,16 +163,38 @@ function persistState(state: UiState): void {
     return;
   }
   try {
-    const expandedProjectCwds = Object.entries(state.projectExpandedById)
-      .filter(([, expanded]) => expanded)
-      .flatMap(([projectId]) => {
-        const cwd = currentProjectCwdById.get(projectId);
-        return cwd ? [cwd] : [];
-      });
-    const projectOrderCwds = state.projectOrder.flatMap((projectId) => {
-      const cwd = currentProjectCwdById.get(projectId);
-      return cwd ? [cwd] : [];
-    });
+    const expandedProjectLogicalIds: string[] = [];
+    const expandedProjectCwds: string[] = [];
+    const seenExpandedLogicalIds = new Set<string>();
+    const seenExpandedCwds = new Set<string>();
+    for (const [projectId, expanded] of Object.entries(state.projectExpandedById)) {
+      if (!expanded) {
+        continue;
+      }
+      appendUniqueString(
+        expandedProjectLogicalIds,
+        seenExpandedLogicalIds,
+        currentProjectLogicalIdById.get(projectId),
+      );
+      appendUniqueString(
+        expandedProjectCwds,
+        seenExpandedCwds,
+        currentProjectCwdById.get(projectId),
+      );
+    }
+
+    const projectOrderLogicalIds: string[] = [];
+    const projectOrderCwds: string[] = [];
+    const seenOrderLogicalIds = new Set<string>();
+    const seenOrderCwds = new Set<string>();
+    for (const projectId of state.projectOrder) {
+      appendUniqueString(
+        projectOrderLogicalIds,
+        seenOrderLogicalIds,
+        currentProjectLogicalIdById.get(projectId),
+      );
+      appendUniqueString(projectOrderCwds, seenOrderCwds, currentProjectCwdById.get(projectId));
+    }
     const threadChangedFilesExpandedById = Object.fromEntries(
       Object.entries(state.threadChangedFilesExpandedById).flatMap(([threadId, turns]) => {
         const nextTurns = Object.fromEntries(
@@ -154,7 +206,9 @@ function persistState(state: UiState): void {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
+        expandedProjectLogicalIds,
         expandedProjectCwds,
+        projectOrderLogicalIds,
         projectOrderCwds,
         threadChangedFilesExpandedById,
       } satisfies PersistedUiState),
@@ -211,34 +265,59 @@ function nestedBooleanRecordsEqual(
 
 export function syncProjects(state: UiState, projects: readonly SyncProjectInput[]): UiState {
   const previousProjectCwdById = new Map(currentProjectCwdById);
+  const previousProjectLogicalIdById = new Map(currentProjectLogicalIdById);
   const previousProjectIdByCwd = new Map(
     [...previousProjectCwdById.entries()].map(([projectId, cwd]) => [cwd, projectId] as const),
   );
+  const previousProjectIdByLogicalId = new Map(
+    [...previousProjectLogicalIdById.entries()].map(
+      ([projectId, logicalId]) => [logicalId, projectId] as const,
+    ),
+  );
   currentProjectCwdById.clear();
+  currentProjectLogicalIdById.clear();
   for (const project of projects) {
     currentProjectCwdById.set(project.key, project.cwd);
+    currentProjectLogicalIdById.set(project.key, project.logicalId ?? project.key);
   }
   const cwdMappingChanged =
     previousProjectCwdById.size !== currentProjectCwdById.size ||
     projects.some((project) => previousProjectCwdById.get(project.key) !== project.cwd);
+  const logicalIdMappingChanged =
+    previousProjectLogicalIdById.size !== currentProjectLogicalIdById.size ||
+    projects.some(
+      (project) =>
+        previousProjectLogicalIdById.get(project.key) !== (project.logicalId ?? project.key),
+    );
 
   const nextExpandedById: Record<string, boolean> = {};
   const previousExpandedById = state.projectExpandedById;
+  const persistedOrderByLogicalId = new Map(
+    persistedProjectOrderLogicalIds.map((logicalId, index) => [logicalId, index] as const),
+  );
   const persistedOrderByCwd = new Map(
     persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
   );
   const mappedProjects = projects.map((project, index) => {
+    const logicalId = project.logicalId ?? project.key;
+    const previousProjectIdForLogicalId = previousProjectIdByLogicalId.get(logicalId);
     const previousProjectIdForCwd = previousProjectIdByCwd.get(project.cwd);
     const expanded =
       previousExpandedById[project.key] ??
+      (previousProjectIdForLogicalId
+        ? previousExpandedById[previousProjectIdForLogicalId]
+        : undefined) ??
       (previousProjectIdForCwd ? previousExpandedById[previousProjectIdForCwd] : undefined) ??
-      (persistedExpandedProjectCwds.size > 0
-        ? persistedExpandedProjectCwds.has(project.cwd)
-        : true);
+      (persistedExpandedProjectLogicalIds.size > 0
+        ? persistedExpandedProjectLogicalIds.has(logicalId)
+        : persistedExpandedProjectCwds.size > 0
+          ? persistedExpandedProjectCwds.has(project.cwd)
+          : true);
     nextExpandedById[project.key] = expanded;
     return {
       id: project.key,
       cwd: project.cwd,
+      logicalId,
       incomingIndex: index,
     };
   });
@@ -246,6 +325,9 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   const nextProjectOrder =
     state.projectOrder.length > 0
       ? (() => {
+          const nextProjectIdByLogicalId = new Map(
+            mappedProjects.map((project) => [project.logicalId, project.id] as const),
+          );
           const nextProjectIdByCwd = new Map(
             mappedProjects.map((project) => [project.cwd, project.id] as const),
           );
@@ -256,6 +338,13 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
             const matchedProjectId =
               (projectId in nextExpandedById ? projectId : undefined) ??
               (() => {
+                const previousLogicalId = previousProjectLogicalIdById.get(projectId);
+                if (previousLogicalId) {
+                  const nextProjectId = nextProjectIdByLogicalId.get(previousLogicalId);
+                  if (nextProjectId) {
+                    return nextProjectId;
+                  }
+                }
                 const previousCwd = previousProjectCwdById.get(projectId);
                 return previousCwd ? nextProjectIdByCwd.get(previousCwd) : undefined;
               })();
@@ -280,8 +369,10 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
             id: project.id,
             incomingIndex: project.incomingIndex,
             orderIndex:
+              persistedOrderByLogicalId.get(project.logicalId) ??
               persistedOrderByCwd.get(project.cwd) ??
-              persistedProjectOrderCwds.length + project.incomingIndex,
+              Math.max(persistedProjectOrderLogicalIds.length, persistedProjectOrderCwds.length) +
+                project.incomingIndex,
           }))
           .toSorted((left, right) => {
             const byOrder = left.orderIndex - right.orderIndex;
@@ -295,7 +386,8 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   if (
     recordsEqual(state.projectExpandedById, nextExpandedById) &&
     projectOrdersEqual(state.projectOrder, nextProjectOrder) &&
-    !cwdMappingChanged
+    !cwdMappingChanged &&
+    !logicalIdMappingChanged
   ) {
     return state;
   }

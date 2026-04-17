@@ -127,7 +127,29 @@ describe("buildProjectUiSyncInputs", () => {
     expect(buildProjectUiSyncInputs([localProject, remoteProject])).toEqual([
       {
         key: "github.com/t3tools/repo",
+        logicalId: "github.com/t3tools/repo",
         cwd: "/repo",
+      },
+    ]);
+  });
+
+  it("selects a deterministic cwd for grouped rows before dedupe", () => {
+    const remoteProject = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: REMOTE_ENVIRONMENT_ID,
+      cwd: "/repo-z",
+    });
+    const localProject = makeProject({
+      id: ProjectId.make("project-local"),
+      environmentId: PRIMARY_ENVIRONMENT_ID,
+      cwd: "/repo-a",
+    });
+
+    expect(buildProjectUiSyncInputs([remoteProject, localProject])).toEqual([
+      {
+        key: "github.com/t3tools/repo",
+        logicalId: "github.com/t3tools/repo",
+        cwd: "/repo-a",
       },
     ]);
   });

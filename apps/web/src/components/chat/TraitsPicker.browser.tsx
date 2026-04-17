@@ -502,4 +502,21 @@ describe("TraitsPicker (Codex)", () => {
       options: { fastMode: true },
     });
   });
+
+  it("persists sticky codex reasoning effort changes", async () => {
+    await using _ = await mountCodexPicker({
+      options: { reasoningEffort: "high", fastMode: false },
+    });
+
+    await page.getByRole("button").click();
+    await page.getByRole("menuitemradio", { name: "Extra High" }).click();
+
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
+      provider: "codex",
+      options: {
+        reasoningEffort: "xhigh",
+        fastMode: false,
+      },
+    });
+  });
 });
