@@ -173,6 +173,13 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("treats quoted standalone double-dash tokens as positional values rather than flags", () => {
+    expect(parseCliArgs('"--dangerously-skip-permissions" --debug')).toEqual({
+      flags: { debug: null },
+      positionals: ["--dangerously-skip-permissions"],
+    });
+  });
+
   it("preserves intentionally empty quoted values", () => {
     expect(parseCliArgs('--append-system-prompt "" --chrome')).toEqual({
       flags: { "append-system-prompt": "", chrome: null },

@@ -106,9 +106,7 @@ export const ServerProvider = Schema.Struct({
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
-  quotaSnapshots: Schema.optional(
-    Schema.Array(ServerProviderQuotaSnapshot).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  ),
+  quotaSnapshots: Schema.optional(Schema.Array(ServerProviderQuotaSnapshot)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

@@ -2660,37 +2660,29 @@ export default function Sidebar() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
-  const orderedProjects = useMemo(() => {
-    return orderItemsByPreferredIds({
-      items: projects,
-      preferredIds: projectOrder,
-      getId: (project) => derivePhysicalProjectKey(project),
-    });
-  }, [projectOrder, projects]);
-
   // Build a mapping from physical project key → logical project key for
   // cross-environment grouping.  Projects that share a repositoryIdentity
   // canonicalKey are treated as one logical project in the sidebar.
   const physicalToLogicalKey = useMemo(() => {
     return buildPhysicalToLogicalProjectKeyMap({
-      projects: orderedProjects,
+      projects,
       settings: projectGroupingSettings,
     });
-  }, [orderedProjects, projectGroupingSettings]);
+  }, [projectGroupingSettings, projects]);
   const projectPhysicalKeyByScopedRef = useMemo(
     () =>
       new Map(
-        orderedProjects.map((project) => [
+        projects.map((project) => [
           scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
           derivePhysicalProjectKey(project),
         ]),
       ),
-    [orderedProjects],
+    [projects],
   );
 
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
     return buildSidebarProjectSnapshots({
-      projects: orderedProjects,
+      projects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,
       resolveEnvironmentLabel: (environmentId) => {
@@ -2700,9 +2692,9 @@ export default function Sidebar() {
       },
     });
   }, [
-    orderedProjects,
     projectGroupingSettings,
     primaryEnvironmentId,
+    projects,
     savedEnvironmentRegistry,
     savedEnvironmentRuntimeById,
   ]);
@@ -2821,11 +2813,7 @@ export default function Sidebar() {
       const activeProject = sidebarProjects.find((project) => project.projectKey === active.id);
       const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
       if (!activeProject || !overProject) return;
-      const activeMemberKeys = activeProject.memberProjects.map(
-        (member) => member.physicalProjectKey,
-      );
-      const overMemberKeys = overProject.memberProjects.map((member) => member.physicalProjectKey);
-      reorderProjects(activeMemberKeys, overMemberKeys);
+      reorderProjects([activeProject.projectKey], [overProject.projectKey]);
     },
     [sidebarProjectSortOrder, reorderProjects, sidebarProjects],
   );
@@ -2868,10 +2856,14 @@ export default function Sidebar() {
     [sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
-    const sortableProjects = sidebarProjects.map((project) => ({
-      ...project,
-      id: project.projectKey,
-    }));
+    const sortableProjects = orderItemsByPreferredIds({
+      items: sidebarProjects.map((project) => ({
+        ...project,
+        id: project.projectKey,
+      })),
+      preferredIds: projectOrder,
+      getId: (project) => project.id,
+    });
     const sortableThreads = visibleThreads.map((thread) => {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(

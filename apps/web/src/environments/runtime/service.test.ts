@@ -110,4 +110,25 @@ describe("buildProjectUiSyncInputs", () => {
     expect(next.projectOrder).toEqual(["github.com/t3tools/repo"]);
     expect(next.projectExpandedById["github.com/t3tools/repo"]).toBe(false);
   });
+
+  it("deduplicates grouped projects before syncing ui state", () => {
+    const localProject = makeProject({
+      id: ProjectId.make("project-local"),
+      environmentId: PRIMARY_ENVIRONMENT_ID,
+      cwd: "/repo",
+    });
+    const remoteProject = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: REMOTE_ENVIRONMENT_ID,
+      cwd: "/repo",
+      name: "Remote rename",
+    });
+
+    expect(buildProjectUiSyncInputs([localProject, remoteProject])).toEqual([
+      {
+        key: "github.com/t3tools/repo",
+        cwd: "/repo",
+      },
+    ]);
+  });
 });

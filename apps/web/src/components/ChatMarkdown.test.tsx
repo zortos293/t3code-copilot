@@ -26,4 +26,17 @@ describe("ChatMarkdown", () => {
     expect(html).toContain("index.ts");
     expect(html).toContain("L12");
   });
+
+  it("excludes trailing punctuation from bare file URL targets", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        text="Open file:///home/project/src/index.ts#L12, then continue."
+        cwd="/home/project"
+      />,
+    );
+
+    expect(html).toContain('href="/home/project/src/index.ts#L12"');
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain(", then continue.");
+  });
 });

@@ -556,6 +556,54 @@ describe("environment grouping", () => {
         }),
       ).toBe("Shared Repo");
     });
+
+    it("uses a renamed non-representative member title when it is the only custom label", () => {
+      expect(
+        deriveProjectGroupLabel({
+          representative: {
+            name: "shared-repo",
+            repositoryIdentity: {
+              canonicalKey: SHARED_REPO_CANONICAL_KEY,
+              name: "shared-repo",
+              displayName: "Shared Repo",
+              locator: {
+                source: "git-remote",
+                remoteName: "origin",
+                remoteUrl: "https://github.com/example/shared-repo.git",
+              },
+            },
+          },
+          members: [
+            {
+              name: "shared-repo",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+            {
+              name: "Remote Workspace",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+          ],
+        }),
+      ).toBe("Remote Workspace");
+    });
   });
 
   describe("selectSidebarThreadsAcrossEnvironments", () => {

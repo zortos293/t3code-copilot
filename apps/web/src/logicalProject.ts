@@ -153,6 +153,25 @@ export function deriveProjectGroupLabel(input: {
     return representativeName;
   }
 
+  const renamedMemberNames = uniqueNonEmptyValues(
+    input.members.flatMap((member) => {
+      const memberName = member.name.trim();
+      const memberRepositoryDisplayName = member.repositoryIdentity?.displayName?.trim() ?? null;
+      const memberRepositoryName = member.repositoryIdentity?.name?.trim() ?? null;
+      if (
+        memberName.length === 0 ||
+        memberName === memberRepositoryDisplayName ||
+        memberName === memberRepositoryName
+      ) {
+        return [];
+      }
+      return [memberName];
+    }),
+  );
+  if (renamedMemberNames.length === 1) {
+    return renamedMemberNames[0]!;
+  }
+
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.displayName),
   );

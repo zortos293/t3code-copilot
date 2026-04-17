@@ -135,7 +135,7 @@ export function parseCliArgs(
     const token = tokens[i]!;
     const tokenValue = token.value;
 
-    if (tokenValue.startsWith("--")) {
+    if (tokenValue.startsWith("--") && (!token.quoted || tokenValue.includes("="))) {
       const rest = tokenValue.slice(2);
       if (!rest) continue;
 

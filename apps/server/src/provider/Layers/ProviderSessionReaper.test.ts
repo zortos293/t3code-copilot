@@ -45,6 +45,7 @@ const unsupported = () => Effect.die(new Error("Unsupported provider call in tes
 function makeReadModel(
   threads: ReadonlyArray<{
     readonly id: ThreadId;
+    readonly latestTurnCompletedAt?: string | null;
     readonly session: {
       readonly threadId: ThreadId;
       readonly status: "starting" | "running" | "ready" | "interrupted" | "stopped" | "error";
@@ -86,7 +87,16 @@ function makeReadModel(
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
-      latestTurn: null,
+      latestTurn: thread.latestTurnCompletedAt
+        ? {
+            turnId: TurnId.make(`${thread.id}-latest-turn`),
+            state: "completed" as const,
+            requestedAt: thread.latestTurnCompletedAt,
+            startedAt: thread.latestTurnCompletedAt,
+            completedAt: thread.latestTurnCompletedAt,
+            assistantMessageId: null,
+          }
+        : null,
       messages: [],
       session: thread.session,
       activities: [],
@@ -216,6 +226,51 @@ describe("ProviderSessionReaper", () => {
 
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
     expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("does not reap a session immediately after a long turn finishes", async () => {
+    const threadId = ThreadId.make("thread-reaper-long-turn-complete");
+    const completedAt = new Date(Date.now() - 100).toISOString();
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          latestTurnCompletedAt: completedAt,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-04-14T00:00:00.000Z",
+          },
+        },
+      ]),
+    });
+    const repository = await runtime!.runPromise(Effect.service(ProviderSessionRuntimeRepository));
+
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        resumeCursor: {
+          opaque: "resume-long-turn",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
   });
 
   it("skips stale sessions when the thread still has an active turn", async () => {

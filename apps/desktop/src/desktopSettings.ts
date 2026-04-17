@@ -65,15 +65,16 @@ export function readDesktopSettings(settingsPath: string, appVersion: string): D
         ? parsed.updateChannel
         : null;
     const isLegacySettings = parsed.updateChannelConfiguredByUser === undefined;
-    const updateChannelConfiguredByUser =
-      parsed.updateChannelConfiguredByUser === true ||
-      (isLegacySettings && parsedUpdateChannel === "nightly");
+    const updateChannelConfiguredByUser = parsed.updateChannelConfiguredByUser === true;
 
     return {
       serverExposureMode:
         parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
       updateChannel:
-        updateChannelConfiguredByUser && parsedUpdateChannel !== null
+        (!isLegacySettings && updateChannelConfiguredByUser && parsedUpdateChannel !== null) ||
+        (isLegacySettings &&
+          parsedUpdateChannel !== null &&
+          parsedUpdateChannel === defaultSettings.updateChannel)
           ? parsedUpdateChannel
           : defaultSettings.updateChannel,
       updateChannelConfiguredByUser,

@@ -40,7 +40,14 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const lastSeenMs = Date.parse(binding.lastSeenAt);
+        const thread = threadsById.get(binding.threadId);
+        const lastSeenMs = Math.max(
+          ...[binding.lastSeenAt, thread?.latestTurn?.completedAt]
+            .flatMap((value) =>
+              typeof value === "string" && value.length > 0 ? [Date.parse(value)] : [],
+            )
+            .filter(Number.isFinite),
+        );
         if (Number.isNaN(lastSeenMs)) {
           yield* Effect.logWarning("provider.session.reaper.invalid-last-seen", {
             threadId: binding.threadId,
@@ -55,7 +62,6 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const thread = threadsById.get(binding.threadId);
         if (thread?.session?.activeTurnId != null) {
           yield* Effect.logDebug("provider.session.reaper.skipped-active-turn", {
             threadId: binding.threadId,

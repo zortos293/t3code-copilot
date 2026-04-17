@@ -732,6 +732,95 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("removes pending startup sessions when the child exits before ready", () => {
+    const manager = new CodexAppServerManager();
+    const threadId = asThreadId("thread-exit-pending");
+    const exitHandlers: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = [];
+    type PendingExitTestContext = {
+      session: {
+        provider: "codex";
+        status: "connecting";
+        threadId: ThreadId;
+        runtimeMode: "full-access";
+        createdAt: string;
+        updatedAt: string;
+      };
+      pending: Map<string, unknown>;
+      pendingApprovals: Map<string, unknown>;
+      pendingUserInputs: Map<string, unknown>;
+      collabReceiverTurns: Map<string, unknown>;
+      stopping: boolean;
+      output: {
+        on: ReturnType<typeof vi.fn>;
+        close: ReturnType<typeof vi.fn>;
+      };
+      child: {
+        stderr: {
+          on: ReturnType<typeof vi.fn>;
+        };
+        on: ReturnType<typeof vi.fn>;
+        killed: boolean;
+      };
+    };
+
+    const context: PendingExitTestContext = {
+      session: {
+        provider: "codex",
+        status: "connecting",
+        threadId,
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:01.000Z",
+        updatedAt: "2026-02-10T00:00:01.000Z",
+      },
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      stopping: false,
+      output: {
+        on: vi.fn(),
+        close: vi.fn(),
+      },
+      child: {
+        stderr: {
+          on: vi.fn(),
+        },
+        on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+          if (event === "exit") {
+            exitHandlers.push(
+              handler as (code: number | null, signal: NodeJS.Signals | null) => void,
+            );
+          }
+        }),
+        killed: false,
+      },
+    };
+
+    (
+      manager as unknown as {
+        pendingSessions: Map<ThreadId, PendingExitTestContext>;
+      }
+    ).pendingSessions.set(threadId, context);
+
+    (
+      manager as unknown as {
+        attachProcessListeners: (context: PendingExitTestContext) => void;
+      }
+    ).attachProcessListeners(context);
+
+    expect(exitHandlers).toHaveLength(1);
+
+    exitHandlers[0]!(1, null);
+
+    expect(
+      (
+        manager as unknown as {
+          pendingSessions: Map<ThreadId, unknown>;
+        }
+      ).pendingSessions.has(threadId),
+    ).toBe(false);
+  });
 });
 
 describe("sendTurn", () => {

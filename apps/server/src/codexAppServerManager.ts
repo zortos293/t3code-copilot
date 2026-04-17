@@ -1056,6 +1056,9 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       if (this.sessions.get(context.session.threadId) === context) {
         this.sessions.delete(context.session.threadId);
       }
+      if (this.pendingSessions.get(context.session.threadId) === context) {
+        this.pendingSessions.delete(context.session.threadId);
+      }
     });
   }
 

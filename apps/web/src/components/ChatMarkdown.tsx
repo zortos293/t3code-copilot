@@ -253,6 +253,24 @@ interface MarkdownFileLinkProps {
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const STANDALONE_FILE_URL_PATTERN = /\bfile:\/\/\/[^\s<>()]+/gi;
+const STANDALONE_FILE_URL_TRAILING_PUNCTUATION_PATTERN = /[.,!?;:]+$/;
+
+function splitStandaloneFileUrlCandidate(value: string): { href: string; trailingText: string } {
+  if (value.length === 0) {
+    return { href: value, trailingText: "" };
+  }
+
+  const trailingPunctuationMatch = value.match(STANDALONE_FILE_URL_TRAILING_PUNCTUATION_PATTERN);
+  const trailingText = trailingPunctuationMatch?.[0] ?? "";
+  if (!trailingText) {
+    return { href: value, trailingText: "" };
+  }
+
+  return {
+    href: value.slice(0, value.length - trailingText.length),
+    trailingText,
+  };
+}
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
@@ -333,7 +351,9 @@ function extractStandaloneFileUrlHrefs(text: string): string[] {
   for (const match of text.matchAll(STANDALONE_FILE_URL_PATTERN)) {
     const href = match[0]?.trim();
     if (!href) continue;
-    hrefs.push(href);
+    const candidate = splitStandaloneFileUrlCandidate(href);
+    if (!candidate.href) continue;
+    hrefs.push(candidate.href);
   }
   return hrefs;
 }
@@ -389,12 +409,27 @@ function remarkStandaloneFileUrls() {
                 value: child.value.slice(lastIndex, matchIndex),
               });
             }
+            const candidate = splitStandaloneFileUrlCandidate(href);
+            if (!candidate.href) {
+              replacementNodes.push({
+                type: "text",
+                value: href,
+              });
+              lastIndex = matchIndex + href.length;
+              continue;
+            }
             replacementNodes.push({
               type: "link",
-              url: href,
+              url: candidate.href,
               title: null,
-              children: [{ type: "text", value: href }],
+              children: [{ type: "text", value: candidate.href }],
             });
+            if (candidate.trailingText.length > 0) {
+              replacementNodes.push({
+                type: "text",
+                value: candidate.trailingText,
+              });
+            }
             lastIndex = matchIndex + href.length;
           }
 

@@ -144,4 +144,22 @@ describe("desktopSettings", () => {
       updateChannelConfiguredByUser: true,
     });
   });
+
+  it("does not treat legacy nightly settings as an explicit track override", () => {
+    const settingsPath = makeSettingsPath();
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        serverExposureMode: "local-only",
+        updateChannel: "nightly",
+      }),
+      "utf8",
+    );
+
+    expect(readDesktopSettings(settingsPath, "0.0.17")).toEqual({
+      serverExposureMode: "local-only",
+      updateChannel: "latest",
+      updateChannelConfiguredByUser: false,
+    });
+  });
 });

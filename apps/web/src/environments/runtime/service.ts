@@ -470,10 +470,17 @@ export function buildProjectUiSyncInputs(
   projects: ReturnType<typeof selectProjectsAcrossEnvironments>,
 ) {
   const projectGroupingSettings = getUnifiedSettingsSnapshot();
-  return projects.map((project) => ({
-    key: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
-    cwd: project.cwd,
-  }));
+  const inputsByLogicalProjectKey = new Map<string, { key: string; cwd: string }>();
+  for (const project of projects) {
+    const key = deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
+    if (!inputsByLogicalProjectKey.has(key)) {
+      inputsByLogicalProjectKey.set(key, {
+        key,
+        cwd: project.cwd,
+      });
+    }
+  }
+  return [...inputsByLogicalProjectKey.values()];
 }
 
 function syncProjectUiFromStore() {

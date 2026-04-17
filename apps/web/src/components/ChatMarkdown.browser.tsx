@@ -160,4 +160,27 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("keeps trailing punctuation outside bare file URL editor targets", async () => {
+    const filePath =
+      "/Users/yashsingh/p/sco/claude-code-extract/src/utils/permissions/PermissionRule.ts";
+    const screen = await render(
+      <ChatMarkdown text={`Open file://${filePath}#L8, then continue`} cwd="/repo/project" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "PermissionRule.ts · L8" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", `${filePath}#L8`);
+      await expect.element(page.getByText(", then continue")).toBeInTheDocument();
+
+      await link.click();
+
+      await vi.waitFor(() => {
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), `${filePath}:8`);
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

@@ -111,6 +111,41 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("preserves missing quota snapshots during cache hydration", () => {
+    const cachedCopilot = makeProvider("copilot", {
+      quotaSnapshots: undefined,
+    });
+    const fallbackCopilot = makeProvider("copilot", {
+      quotaSnapshots: [
+        {
+          key: "premium_interactions",
+          entitlementRequests: 100,
+          usedRequests: 25,
+          remainingPercentage: 75,
+          overage: 0,
+          overageAllowedWithExhaustedQuota: false,
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCopilot,
+        fallbackProvider: fallbackCopilot,
+      }),
+      {
+        ...fallbackCopilot,
+        installed: cachedCopilot.installed,
+        version: cachedCopilot.version,
+        status: cachedCopilot.status,
+        auth: cachedCopilot.auth,
+        checkedAt: cachedCopilot.checkedAt,
+        slashCommands: cachedCopilot.slashCommands,
+        skills: cachedCopilot.skills,
+      },
+    );
+  });
+
   it("ignores stale cached enabled state when the provider is now disabled", () => {
     const cachedCodex = makeProvider("codex", {
       checkedAt: "2026-04-10T12:00:00.000Z",

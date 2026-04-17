@@ -10,7 +10,6 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
-import { derivePhysicalProjectKey } from "../logicalProject";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -149,6 +148,10 @@ export function useNewThreadHandler() {
 
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectGroupingSettings = useSettings((settings) => ({
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  }));
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -170,9 +173,9 @@ export function useHandleNewThread() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: (project) => derivePhysicalProjectKey(project),
+      getId: (project) => deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
     });
-  }, [projectOrder, projects]);
+  }, [projectGroupingSettings, projectOrder, projects]);
   const handleNewThread = useNewThreadState();
 
   return {
