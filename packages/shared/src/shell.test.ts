@@ -217,6 +217,32 @@ describe("readEnvironmentFromWindowsShell", () => {
     );
   });
 
+  it("merges machine, user, and inherited PATH entries when probing PATH", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(
+      () =>
+        "__T3CODE_ENV_PATH_START__\nC:\\Machine\\Node;C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Windows\\System32\n__T3CODE_ENV_PATH_END__\n",
+    );
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
+      PATH: "C:\\Machine\\Node;C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Windows\\System32",
+    });
+
+    const firstCall = execFile.mock.calls[0];
+    expect(firstCall?.[1]?.at(-1)).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH', 'User')",
+    );
+    expect(firstCall?.[1]?.at(-1)).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH', 'Machine')",
+    );
+    expect(firstCall?.[1]?.at(-1)).toContain("$env:PATH");
+  });
+
   it("strips CRLF delimiters from captured PowerShell values", () => {
     const execFile = vi.fn<
       (
@@ -418,6 +444,53 @@ describe("resolveWindowsEnvironment", () => {
         platform: "win32",
       }),
     );
+  });
+
+  it("recovers node from registry-backed PATH entries before loading the profile", () => {
+    const readEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+        options?.loadProfile
+          ? { PATH: "C:\\Profile\\Node;C:\\Windows\\System32" }
+          : { PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Machine\\Node" },
+    );
+    const commandAvailable = vi.fn((command: string, probe) => {
+      if (command !== "node") {
+        return false;
+      }
+
+      return (
+        probe?.platform === "win32" &&
+        typeof probe.env?.PATH === "string" &&
+        probe.env.PATH.includes("C:\\Machine\\Node")
+      );
+    });
+
+    expect(
+      resolveWindowsEnvironment(
+        {
+          PATH: "C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+          USERPROFILE: "C:\\Users\\testuser",
+        },
+        {
+          readEnvironment,
+          commandAvailable,
+        },
+      ),
+    ).toEqual({
+      PATH: [
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Machine\\Node",
+        "C:\\Windows\\System32",
+      ].join(";"),
+    });
+    expect(readEnvironment).toHaveBeenCalledTimes(1);
   });
 
   it("loads the PowerShell profile when baseline env cannot resolve node", () => {

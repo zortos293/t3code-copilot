@@ -147,6 +147,26 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+  const mergePathCommand = [
+    "$pathValues = @(",
+    "  [Environment]::GetEnvironmentVariable('PATH', 'User'),",
+    "  [Environment]::GetEnvironmentVariable('PATH', 'Machine'),",
+    "  $env:PATH",
+    ")",
+    "$seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)",
+    "$entries = foreach ($pathValue in $pathValues) {",
+    "  if ([string]::IsNullOrWhiteSpace($pathValue)) { continue }",
+    "  foreach ($entry in $pathValue -split ';') {",
+    "    $trimmed = $entry.Trim()",
+    "    if ($trimmed.Length -eq 0) { continue }",
+    "    $normalized = $trimmed.Trim('\"')",
+    "    if ($normalized.Length -eq 0) { continue }",
+    "    if ($seen.Add($normalized)) { $trimmed }",
+    "  }",
+    "}",
+    "$value = [string]::Join(';', $entries)",
+  ].join("; ");
+
   return [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
@@ -156,7 +176,9 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        ...(name === "PATH"
+          ? [mergePathCommand]
+          : [`$value = [Environment]::GetEnvironmentVariable('${name}')`]),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];

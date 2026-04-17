@@ -41,6 +41,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       );
+
+      assert.deepEqual(
+        decodePatch({
+          providers: {
+            claudeAgent: {
+              launchArgs: "--verbose --dangerously-skip-permissions",
+            },
+          },
+        }),
+        {
+          providers: {
+            claudeAgent: {
+              launchArgs: "--verbose --dangerously-skip-permissions",
+            },
+          },
+        },
+      );
     }),
   );
 

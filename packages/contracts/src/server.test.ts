@@ -23,4 +23,22 @@ describe("ServerProvider", () => {
     expect(parsed.slashCommands).toEqual([]);
     expect(parsed.skills).toEqual([]);
   });
+
+  it("keeps quotaSnapshots undefined when legacy snapshots omit them", () => {
+    const parsed = decodeServerProvider({
+      provider: "codex",
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+    });
+
+    expect(parsed.quotaSnapshots).toBeUndefined();
+    expect("quotaSnapshots" in parsed).toBe(false);
+  });
 });
