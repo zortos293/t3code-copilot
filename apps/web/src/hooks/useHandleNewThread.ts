@@ -10,6 +10,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { derivePhysicalProjectKey } from "../logicalProject";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -169,7 +170,7 @@ export function useHandleNewThread() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: (project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      getId: (project) => derivePhysicalProjectKey(project),
     });
   }, [projectOrder, projects]);
   const handleNewThread = useNewThreadState();

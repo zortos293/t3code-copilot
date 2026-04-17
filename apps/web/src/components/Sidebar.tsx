@@ -2664,7 +2664,7 @@ export default function Sidebar() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: (project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      getId: (project) => derivePhysicalProjectKey(project),
     });
   }, [projectOrder, projects]);
 

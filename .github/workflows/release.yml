@@ -138,17 +138,17 @@ jobs:
       matrix:
         include:
           - label: macOS arm64
-            runner: blacksmith-12vcpu-macos-26
+            runner: macos-26
             platform: mac
             target: dmg
             arch: arm64
           - label: macOS x64
-            runner: blacksmith-12vcpu-macos-26
+            runner: macos-26-intel
             platform: mac
             target: dmg
             arch: x64
           - label: Linux x64
-            runner: blacksmith-32vcpu-ubuntu-2404
+            runner: ubuntu-24.04
             platform: linux
             target: AppImage
             arch: x64

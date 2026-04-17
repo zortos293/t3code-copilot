@@ -75,6 +75,7 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { PersistenceSqlError } from "./persistence/Errors.ts";
 import {
   ProviderRegistry,
   type ProviderRegistryShape,
@@ -3442,6 +3443,64 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.archive",
             commandId: CommandId.make("cmd-thread-archive-stop-defect"),
+            threadId,
+          }),
+        ),
+      );
+
+      assert.equal(dispatchResult.sequence, 1);
+      assert.deepEqual(effects, [
+        "dispatch:thread.archive",
+        "dispatch:thread.session.stop",
+        `terminal.close:${threadId}`,
+      ]);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.archive", "thread.session.stop"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("archives and stops the session defensively when snapshot lookup fails", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-archive-lookup-failure");
+      const effects: string[] = [];
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          terminalManager: {
+            close: (input) =>
+              Effect.sync(() => {
+                effects.push(`terminal.close:${input.threadId}`);
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                effects.push(`dispatch:${command.type}`);
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.fail(
+                new PersistenceSqlError({
+                  operation: "getThreadShellById",
+                  detail: "simulated thread lookup failure",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const dispatchResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.archive",
+            commandId: CommandId.make("cmd-thread-archive-lookup-failure"),
             threadId,
           }),
         ),

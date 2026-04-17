@@ -4,7 +4,7 @@ import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { HttpClient, HttpRouter } from "effect/unstable/http";
 
-import { makeMockUpdateRouteLayer } from "./mock-update-server.ts";
+import { makeMockUpdateRouteLayer, resolveRootRealPath } from "./mock-update-server.ts";
 
 const withMockUpdateServer = <A, E, R>(rootRealPath: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
@@ -99,6 +99,21 @@ it.layer(NodeServices.layer)("mock-update-server", (it) => {
           assert.equal(yield* response.text, "Not Found");
         }),
       );
+    }),
+  );
+
+  it.effect("falls back to the resolved path when the configured root does not exist yet", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "mock-update-server-missing-root-",
+      });
+      const missingRoot = path.join(parent, "release-mock");
+
+      const resolved = yield* resolveRootRealPath(missingRoot);
+
+      assert.equal(resolved, missingRoot);
     }),
   );
 });

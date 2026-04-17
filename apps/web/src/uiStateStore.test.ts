@@ -219,6 +219,23 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[recreatedProject2]).toBe(false);
   });
 
+  it("syncProjects replays persisted physical project order for grouped logical rows", () => {
+    const primaryProjectKey = "environment-local:/tmp/project-a";
+    const secondaryProjectKey = "environment-remote:/tmp/project-a";
+    const otherProjectKey = "environment-local:/tmp/project-b";
+    const initialState = makeUiState({
+      projectOrder: [secondaryProjectKey, primaryProjectKey, otherProjectKey],
+    });
+
+    const next = syncProjects(initialState, [
+      { key: primaryProjectKey, cwd: "/tmp/project-a" },
+      { key: secondaryProjectKey, cwd: "/tmp/project-a" },
+      { key: otherProjectKey, cwd: "/tmp/project-b" },
+    ]);
+
+    expect(next.projectOrder).toEqual([secondaryProjectKey, primaryProjectKey, otherProjectKey]);
+  });
+
   it("syncProjects returns a new state when only project cwd changes", () => {
     const project1 = ProjectId.make("project-1");
     const initialState = syncProjects(

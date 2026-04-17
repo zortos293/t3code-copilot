@@ -99,6 +99,36 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("preserves quoted values in string input", () => {
+    expect(parseCliArgs('--append-system-prompt "always think step by step" --chrome')).toEqual({
+      flags: { "append-system-prompt": "always think step by step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves escaped whitespace in string input", () => {
+    expect(
+      parseCliArgs(String.raw`--append-system-prompt always\ think\ step\ by\ step --chrome`),
+    ).toEqual({
+      flags: { "append-system-prompt": "always think step by step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("parses quoted values in --key=value syntax", () => {
+    expect(parseCliArgs('--launch-arg="--project Claude Code" --debug')).toEqual({
+      flags: { "launch-arg": "--project Claude Code", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves intentionally empty quoted values", () => {
+    expect(parseCliArgs('--append-system-prompt "" --chrome')).toEqual({
+      flags: { "append-system-prompt": "", chrome: null },
+      positionals: [],
+    });
+  });
+
   it("ignores bare -- with no flag name", () => {
     expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
   });

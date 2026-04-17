@@ -7,6 +7,70 @@ export interface ParseCliArgsOptions {
   readonly booleanFlags?: readonly string[];
 }
 
+function tokenizeCliArgs(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+  let tokenStarted = false;
+
+  const pushCurrent = () => {
+    if (!tokenStarted) {
+      return;
+    }
+    tokens.push(current);
+    current = "";
+    tokenStarted = false;
+  };
+
+  for (const char of input.trim()) {
+    if (escaping) {
+      current += char;
+      tokenStarted = true;
+      escaping = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      tokenStarted = true;
+      escaping = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+        tokenStarted = true;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      tokenStarted = true;
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+    tokenStarted = true;
+  }
+
+  if (escaping) {
+    current += "\\";
+    tokenStarted = true;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
 /**
  * Parse CLI-style arguments into flags and positionals.
  *
@@ -32,8 +96,7 @@ export function parseCliArgs(
   args: string | readonly string[],
   options?: ParseCliArgsOptions,
 ): ParsedCliArgs {
-  const tokens =
-    typeof args === "string" ? args.trim().split(/\s+/).filter(Boolean) : Array.from(args);
+  const tokens = typeof args === "string" ? tokenizeCliArgs(args) : Array.from(args);
   const booleanSet = options?.booleanFlags ? new Set(options.booleanFlags) : undefined;
 
   const flags: Record<string, string | null> = {};

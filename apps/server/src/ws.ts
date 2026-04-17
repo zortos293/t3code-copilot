@@ -562,7 +562,15 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                               thread.session !== null && thread.session.status !== "stopped",
                           }),
                         ),
-                        Effect.catch(() => Effect.succeed(false)),
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            "failed to inspect thread session before archive; stopping session defensively",
+                            {
+                              threadId: normalizedCommand.threadId,
+                              cause,
+                            },
+                          ).pipe(Effect.as(true)),
+                        ),
                       )
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
