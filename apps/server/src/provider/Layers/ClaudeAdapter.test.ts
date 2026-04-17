@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -1594,7 +1594,74 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("closes the previous session before replacing an existing thread session", () => {
+  it.effect("keeps the current session alive when replacement validation fails", () => {
+    const queries: FakeClaudeQuery[] = [];
+    let resolveCliVersionCalls = 0;
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        queries.push(query);
+        return query;
+      },
+      resolveCliVersion: () => {
+        resolveCliVersionCalls += 1;
+        return Effect.succeed(resolveCliVersionCalls === 1 ? "2.1.111" : null);
+      },
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const firstSession = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+          resumeCursor: firstSession.resumeCursor,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.deepEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: "claudeAgent",
+          operation: "startSession",
+          issue:
+            "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+        }),
+      );
+
+      const activeSessions = yield* adapter.listSessions();
+      assert.equal(queries.length, 1);
+      assert.equal(queries[0]?.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      assert.equal(activeSessions.length, 1);
+      assert.deepEqual(activeSessions[0]?.resumeCursor, firstSession.resumeCursor);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("closes the previous session only after replacing an existing thread session", () => {
     const queries: FakeClaudeQuery[] = [];
     const layer = makeClaudeAdapterLive({
       createQuery: () => {
@@ -1654,6 +1721,74 @@ describe("ClaudeAdapterLive", () => {
         false,
       );
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("does not trust version output from failing Claude CLI probes", () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "t3-claude-version-probe-"));
+    const fakeBinaryPath = path.join(
+      tempRoot,
+      process.platform === "win32" ? "claude.cmd" : "claude",
+    );
+    if (process.platform === "win32") {
+      writeFileSync(fakeBinaryPath, "@echo off\r\necho claude 2.1.111 1>&2\r\nexit /b 1\r\n");
+    } else {
+      writeFileSync(
+        fakeBinaryPath,
+        "#!/usr/bin/env sh\n" + "echo 'claude 2.1.111' >&2\n" + "exit 1\n",
+      );
+      chmodSync(fakeBinaryPath, 0o755);
+    }
+
+    const layer = makeClaudeAdapterLive().pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          providers: {
+            claudeAgent: {
+              binaryPath: fakeBinaryPath,
+            },
+          },
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.deepEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: "claudeAgent",
+          operation: "startSession",
+          issue:
+            "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+        }),
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(tempRoot, { recursive: true, force: true });
+        }),
+      ),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),
     );

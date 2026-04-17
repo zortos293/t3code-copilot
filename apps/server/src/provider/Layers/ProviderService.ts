@@ -297,6 +297,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return { adapter: recovered.adapter, threadId: input.threadId, isActive: true } as const;
   });
 
+  const restorePersistedBinding = (
+    threadId: ThreadId,
+    binding: ProviderRuntimeBinding | undefined,
+  ) =>
+    binding
+      ? directory.upsert({
+          threadId: binding.threadId,
+          provider: binding.provider,
+          ...(binding.adapterKey !== undefined ? { adapterKey: binding.adapterKey } : {}),
+          ...(binding.runtimeMode !== undefined ? { runtimeMode: binding.runtimeMode } : {}),
+          ...(binding.status !== undefined ? { status: binding.status } : {}),
+          ...(binding.resumeCursor !== undefined ? { resumeCursor: binding.resumeCursor } : {}),
+          ...(binding.runtimePayload !== undefined
+            ? { runtimePayload: binding.runtimePayload }
+            : {}),
+        })
+      : directory.remove(threadId);
+
   const stopStaleSessionsForThread = Effect.fn("stopStaleSessionsForThread")(function* (input: {
     readonly threadId: ThreadId;
     readonly currentProvider: ProviderSession["provider"];
@@ -404,37 +422,18 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }).pipe(
           Effect.catch((error) =>
             adapter.stopSession(threadId).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("provider.session.stop-replacement-failed", {
-                  threadId,
-                  provider: adapter.provider,
-                  cause,
-                }),
-              ),
-              Effect.andThen(
-                persistedBinding
-                  ? directory.upsert({
-                      threadId: persistedBinding.threadId,
-                      provider: persistedBinding.provider,
-                      ...(persistedBinding.adapterKey !== undefined
-                        ? { adapterKey: persistedBinding.adapterKey }
-                        : {}),
-                      ...(persistedBinding.runtimeMode !== undefined
-                        ? { runtimeMode: persistedBinding.runtimeMode }
-                        : {}),
-                      ...(persistedBinding.status !== undefined
-                        ? { status: persistedBinding.status }
-                        : {}),
-                      ...(persistedBinding.resumeCursor !== undefined
-                        ? { resumeCursor: persistedBinding.resumeCursor }
-                        : {}),
-                      ...(persistedBinding.runtimePayload !== undefined
-                        ? { runtimePayload: persistedBinding.runtimePayload }
-                        : {}),
-                    })
-                  : directory.remove(threadId),
-              ),
-              Effect.andThen(Effect.fail(error)),
+              Effect.matchCauseEffect({
+                onFailure: (cause) =>
+                  Effect.logWarning("provider.session.stop-replacement-failed", {
+                    threadId,
+                    provider: adapter.provider,
+                    cause,
+                  }).pipe(Effect.andThen(Effect.fail(error))),
+                onSuccess: () =>
+                  restorePersistedBinding(threadId, persistedBinding).pipe(
+                    Effect.andThen(Effect.fail(error)),
+                  ),
+              }),
             ),
           ),
         );

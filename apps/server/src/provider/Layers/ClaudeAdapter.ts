@@ -2459,7 +2459,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    sessions.delete(context.session.threadId);
+    if (sessions.get(context.session.threadId) === context) {
+      sessions.delete(context.session.threadId);
+    }
   });
 
   const requireSession = (
@@ -2502,18 +2504,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           existingSessionStatus: existingContext.session.status,
           reason: "startSession called with existing active session",
         });
-        yield* stopSessionInternal(existingContext, {
-          emitExitEvent: false,
-        }).pipe(
-          // Replacement cleanup is best-effort: never block the new session on
-          // either typed failures or unexpected defects from tearing down the old one.
-          Effect.catchCause((cause) =>
-            Effect.logWarning("claude.session.replace.stop-failed", {
-              threadId: input.threadId,
-              cause,
-            }),
-          ),
-        );
       }
 
       const startedAt = yield* nowIso;
@@ -2958,6 +2948,18 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
+      if (existingContext) {
+        yield* stopSessionInternal(existingContext, {
+          emitExitEvent: false,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.session.replace.stop-failed", {
+              threadId,
+              cause,
+            }),
+          ),
+        );
+      }
 
       const sessionStartedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -3322,11 +3324,15 @@ function resolveClaudeCliVersionEffect(
   });
   return spawnAndCollect(binaryPath, command).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.map((result) =>
-      Option.isSome(result)
-        ? parseGenericCliVersion(`${result.value.stdout}\n${result.value.stderr}`)
-        : null,
-    ),
+    Effect.map((result) => {
+      if (!Option.isSome(result)) {
+        return null;
+      }
+      if (result.value.code !== 0) {
+        return null;
+      }
+      return parseGenericCliVersion(`${result.value.stdout}\n${result.value.stderr}`);
+    }),
     Effect.orElseSucceed(() => null),
   );
 }

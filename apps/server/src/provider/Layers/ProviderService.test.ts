@@ -792,6 +792,114 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("keeps the replacement binding when replacement shutdown fails during rollback", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-replacement-stop-failure");
+
+      const initial = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-replacement-stop-failure",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: "codex",
+            operation: "ProviderService.test",
+            issue: "simulated stale stop failure",
+          }),
+        ),
+      );
+      routing.claude.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "ProviderService.test",
+            issue: "simulated replacement stop failure",
+          }),
+        ),
+      );
+
+      const failure = yield* Effect.flip(
+        provider.startSession(threadId, {
+          provider: "claudeAgent",
+          threadId,
+          cwd: "/tmp/project-provider-replacement-stop-failure",
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "Failed to stop stale provider session");
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "claudeAgent");
+      assert.equal(routing.claude.stopSession.mock.calls.length >= 1, true);
+      assert.deepEqual(routing.claude.stopSession.mock.calls.at(-1), [threadId]);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider)
+          .toSorted(),
+        ["claudeAgent", "codex"],
+      );
+    }),
+  );
+
+  it.effect("does not let stale shutdown remove the active replacement binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-stale-delete-guard");
+
+      yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        cwd: "/tmp/project-provider-stale-delete-guard",
+        runtimeMode: "full-access",
+      });
+
+      const originalClaudeStopSession = routing.claude.stopSession.getMockImplementation();
+      routing.claude.stopSession.mockImplementationOnce((stoppedThreadId: ThreadId) =>
+        Effect.gen(function* () {
+          const bindingBeforeDelete = Option.getOrUndefined(
+            yield* Effect.orDie(directory.getBinding(stoppedThreadId)),
+          );
+          assert.equal(bindingBeforeDelete?.provider, "codex");
+          if (!originalClaudeStopSession) {
+            return;
+          }
+          return yield* originalClaudeStopSession(stoppedThreadId);
+        }),
+      );
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-stale-delete-guard",
+        runtimeMode: "full-access",
+      });
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "codex");
+      assert.deepEqual(binding?.resumeCursor, replacement.resumeCursor);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider),
+        ["codex"],
+      );
+    }),
+  );
+
   it.effect("recovers stale sessions for sendTurn using persisted cwd", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
