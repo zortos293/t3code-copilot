@@ -733,6 +733,73 @@ describe("startSession", () => {
     }
   });
 
+  it("replaces an in-flight pending startup before beginning a new session", async () => {
+    const manager = new CodexAppServerManager();
+    const threadId = asThreadId("thread-pending-replacement");
+    const pendingContext = {
+      session: {
+        provider: "codex",
+        status: "connecting",
+        threadId,
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:01.000Z",
+        updatedAt: "2026-02-10T00:00:01.000Z",
+      },
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      stopping: false,
+      output: { close: vi.fn() },
+      child: { killed: true },
+    };
+    (
+      manager as unknown as {
+        pendingSessions: Map<ThreadId, typeof pendingContext>;
+      }
+    ).pendingSessions.set(threadId, pendingContext);
+
+    const disposeSession = vi.spyOn(
+      manager as unknown as {
+        disposeSession: (
+          context: unknown,
+          options?: { readonly emitLifecycleEvent?: boolean },
+        ) => void;
+      },
+      "disposeSession",
+    );
+    const processCwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd missing");
+    });
+
+    try {
+      await expect(
+        manager.startSession({
+          threadId,
+          provider: "codex",
+          binaryPath: "codex",
+          runtimeMode: "full-access",
+        }),
+      ).rejects.toThrow("cwd missing");
+
+      expect(disposeSession).toHaveBeenCalledWith(
+        pendingContext,
+        expect.objectContaining({ emitLifecycleEvent: false }),
+      );
+      expect(
+        (
+          manager as unknown as {
+            pendingSessions: Map<ThreadId, unknown>;
+          }
+        ).pendingSessions.has(threadId),
+      ).toBe(false);
+    } finally {
+      disposeSession.mockRestore();
+      processCwd.mockRestore();
+      manager.stopAll();
+    }
+  });
+
   it("removes pending startup sessions when the child exits before ready", () => {
     const manager = new CodexAppServerManager();
     const threadId = asThreadId("thread-exit-pending");

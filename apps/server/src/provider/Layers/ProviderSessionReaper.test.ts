@@ -574,4 +574,71 @@ describe("ProviderSessionReaper", () => {
       reapedThreadId,
     ]);
   });
+
+  it("skips reaping when the binding was refreshed after the sweep snapshot", async () => {
+    const threadId = ThreadId.make("thread-reaper-replacement-race");
+    const now = new Date().toISOString();
+    const harness = await createHarness({
+      readModel: makeReadModel([
+        {
+          id: threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "claudeAgent",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ]),
+      stopSessionImplementation: () =>
+        Effect.fail(
+          new ProviderValidationError({
+            operation: "ProviderSessionReaper.test",
+            issue: "should not stop refreshed session",
+          }),
+        ),
+    });
+    const repository = await runtime!.runPromise(Effect.service(ProviderSessionRuntimeRepository));
+
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "codex",
+        adapterKey: "codex",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: "2026-04-14T00:00:00.000Z",
+        resumeCursor: {
+          opaque: "resume-race-old",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
+
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt: new Date().toISOString(),
+        resumeCursor: {
+          opaque: "resume-race-new",
+        },
+        runtimePayload: null,
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(harness.stopSession).not.toHaveBeenCalled();
+  });
 });

@@ -301,34 +301,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly currentProvider: ProviderSession["provider"];
   }) {
-    yield* Effect.forEach(
-      adapters,
-      (adapter) =>
-        adapter.provider === input.currentProvider
-          ? Effect.void
-          : Effect.gen(function* () {
-              const hasSession = yield* adapter.hasSession(input.threadId);
-              if (!hasSession) {
-                return;
-              }
+    const failures = yield* Effect.forEach(adapters, (adapter) =>
+      adapter.provider === input.currentProvider
+        ? Effect.succeed<readonly [ProviderSession["provider"], unknown] | null>(null)
+        : Effect.gen(function* () {
+            const hasSession = yield* adapter.hasSession(input.threadId);
+            if (!hasSession) {
+              return null;
+            }
 
-              yield* adapter.stopSession(input.threadId).pipe(
-                Effect.tap(() =>
-                  analytics.record("provider.session.stopped", {
-                    provider: adapter.provider,
-                  }),
-                ),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("provider.session.stop-stale-failed", {
-                    threadId: input.threadId,
-                    provider: adapter.provider,
-                    cause,
-                  }),
-                ),
-              );
-            }),
-      { discard: true },
+            return yield* adapter.stopSession(input.threadId).pipe(
+              Effect.tap(() =>
+                analytics.record("provider.session.stopped", {
+                  provider: adapter.provider,
+                }),
+              ),
+              Effect.as(null),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("provider.session.stop-stale-failed", {
+                  threadId: input.threadId,
+                  provider: adapter.provider,
+                  cause,
+                }).pipe(Effect.as([adapter.provider, cause] as const)),
+              ),
+            );
+          }),
     );
+
+    const failure = failures.find((result) => result !== null);
+    if (failure) {
+      const [provider, cause] = failure;
+      return yield* Effect.fail(
+        new ProviderValidationError({
+          operation: "ProviderService.startSession",
+          issue: `Failed to stop stale provider session for '${provider}'.`,
+          cause,
+        }),
+      );
+    }
   });
 
   const startSession: ProviderServiceShape["startSession"] = Effect.fn("startSession")(
@@ -391,7 +401,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* stopStaleSessionsForThread({
           threadId,
           currentProvider: adapter.provider,
-        });
+        }).pipe(
+          Effect.catch((error) =>
+            adapter.stopSession(threadId).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("provider.session.stop-replacement-failed", {
+                  threadId,
+                  provider: adapter.provider,
+                  cause,
+                }),
+              ),
+              Effect.andThen(
+                persistedBinding
+                  ? directory.upsert({
+                      threadId: persistedBinding.threadId,
+                      provider: persistedBinding.provider,
+                      ...(persistedBinding.adapterKey !== undefined
+                        ? { adapterKey: persistedBinding.adapterKey }
+                        : {}),
+                      ...(persistedBinding.runtimeMode !== undefined
+                        ? { runtimeMode: persistedBinding.runtimeMode }
+                        : {}),
+                      ...(persistedBinding.status !== undefined
+                        ? { status: persistedBinding.status }
+                        : {}),
+                      ...(persistedBinding.resumeCursor !== undefined
+                        ? { resumeCursor: persistedBinding.resumeCursor }
+                        : {}),
+                      ...(persistedBinding.runtimePayload !== undefined
+                        ? { runtimePayload: persistedBinding.runtimePayload }
+                        : {}),
+                    })
+                  : directory.remove(threadId),
+              ),
+              Effect.andThen(Effect.fail(error)),
+            ),
+          ),
+        );
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
           runtimeMode: input.runtimeMode,

@@ -71,6 +71,26 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
+        const currentBinding = (yield* directory.listBindings()).find(
+          (candidate) => candidate.threadId === binding.threadId,
+        );
+        if (
+          !currentBinding ||
+          currentBinding.provider !== binding.provider ||
+          currentBinding.lastSeenAt !== binding.lastSeenAt ||
+          currentBinding.status === "stopped"
+        ) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-updated-binding", {
+            threadId: binding.threadId,
+            provider: binding.provider,
+            lastSeenAt: binding.lastSeenAt,
+            currentProvider: currentBinding?.provider ?? null,
+            currentLastSeenAt: currentBinding?.lastSeenAt ?? null,
+            currentStatus: currentBinding?.status ?? null,
+          });
+          continue;
+        }
+
         const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(
           Effect.tap(() =>
             Effect.logInfo("provider.session.reaped", {

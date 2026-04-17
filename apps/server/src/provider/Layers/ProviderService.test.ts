@@ -24,6 +24,7 @@ import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effec
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  ProviderAdapterValidationError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
   ProviderValidationError,
@@ -737,6 +738,57 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.deepEqual(bindingDuringStop?.resumeCursor, replacement.resumeCursor);
 
       routing.codex.stopSession.mockImplementation(originalStopSession ?? (() => Effect.void));
+    }),
+  );
+
+  it.effect("rolls back replacement startup when stopping a stale provider fails", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-stop-failure");
+
+      const initial = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-stop-failure",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: "codex",
+            operation: "ProviderService.test",
+            issue: "simulated stale stop failure",
+          }),
+        ),
+      );
+
+      const failure = yield* Effect.flip(
+        provider.startSession(threadId, {
+          provider: "claudeAgent",
+          threadId,
+          cwd: "/tmp/project-provider-stop-failure",
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "Failed to stop stale provider session");
+      assert.equal(routing.claude.stopSession.mock.calls.length, 1);
+      assert.deepEqual(routing.claude.stopSession.mock.calls[0], [threadId]);
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "codex");
+      assert.deepEqual(binding?.resumeCursor, initial.resumeCursor);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider)
+          .toSorted(),
+        ["codex"],
+      );
     }),
   );
 

@@ -10,6 +10,7 @@ import type {
 import { Cache, Duration, Effect, Equal, Layer, Option, Result, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import {
   query as claudeQuery,
   type SlashCommand as ClaudeSlashCommand,
@@ -161,10 +162,15 @@ export function resolveClaudeModelForVersion(
   model: string | null | undefined,
   version: string | null | undefined,
 ): string | undefined {
-  if (model?.trim() !== "claude-opus-4-7") {
-    return model?.trim() || undefined;
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return undefined;
   }
-  return supportsClaudeOpus47(version) ? "claude-opus-4-7" : "claude-opus-4-6";
+  const normalized = normalizeModelSlug(trimmed, PROVIDER) ?? trimmed;
+  if (normalized !== "claude-opus-4-7") {
+    return trimmed;
+  }
+  return supportsClaudeOpus47(version) ? normalized : "claude-opus-4-6";
 }
 
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {

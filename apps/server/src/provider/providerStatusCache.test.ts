@@ -111,6 +111,61 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("preserves cached runtime-discovered models during cache hydration", () => {
+    const cachedCopilot = makeProvider("copilot", {
+      models: [
+        {
+          slug: "gpt-5",
+          name: "GPT-5",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "claude-opus-4.7",
+          name: "Claude Opus 4.7",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+    const fallbackCopilot = makeProvider("copilot", {
+      models: [
+        {
+          slug: "gpt-5",
+          name: "GPT-5 fallback",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCopilot,
+        fallbackProvider: fallbackCopilot,
+      }).models,
+      cachedCopilot.models,
+    );
+  });
+
   it("preserves missing quota snapshots during cache hydration", () => {
     const cachedCopilot = makeProvider("copilot", {
       quotaSnapshots: undefined,

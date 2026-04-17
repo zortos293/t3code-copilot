@@ -450,8 +450,19 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
     const existingContext = this.sessions.get(threadId);
+    const existingPendingContext = this.pendingSessions.get(threadId);
 
     try {
+      if (existingPendingContext) {
+        await Effect.logWarning("codex app-server replacing pending session", {
+          threadId,
+          existingStatus: existingPendingContext.session.status,
+        }).pipe(this.runPromise);
+        this.disposeSession(existingPendingContext, {
+          emitLifecycleEvent: false,
+        });
+      }
+
       if (existingContext) {
         await Effect.logWarning("codex app-server replacing existing session", {
           threadId,

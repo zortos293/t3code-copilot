@@ -8,7 +8,11 @@ interface ParsedCliSemver {
 const CLI_VERSION_NUMBER_SEGMENT = /^\d+$/;
 
 export function normalizeCliVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const trimmed = version.trim();
+  const firstHyphenIndex = trimmed.indexOf("-");
+  const main = firstHyphenIndex === -1 ? trimmed : trimmed.slice(0, firstHyphenIndex);
+  const prerelease =
+    firstHyphenIndex === -1 ? undefined : trimmed.slice(firstHyphenIndex + 1).trim();
   const segments = (main ?? "")
     .split(".")
     .map((segment) => segment.trim())
@@ -23,7 +27,9 @@ export function normalizeCliVersion(version: string): string {
 
 function parseCliSemver(version: string): ParsedCliSemver | null {
   const normalized = normalizeCliVersion(version);
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const firstHyphenIndex = normalized.indexOf("-");
+  const main = firstHyphenIndex === -1 ? normalized : normalized.slice(0, firstHyphenIndex);
+  const prerelease = firstHyphenIndex === -1 ? undefined : normalized.slice(firstHyphenIndex + 1);
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;
