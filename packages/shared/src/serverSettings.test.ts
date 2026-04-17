@@ -109,4 +109,27 @@ describe("serverSettings helpers", () => {
       },
     });
   });
+
+  it("preserves Claude launchArgs when applying a provider settings patch", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        claudeAgent: {
+          ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+          launchArgs: "--dangerously-skip-permissions",
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        providers: {
+          claudeAgent: {
+            launchArgs: "--verbose --dangerously-skip-permissions",
+          },
+        },
+      }).providers.claudeAgent.launchArgs,
+    ).toBe("--verbose --dangerously-skip-permissions");
+  });
 });
