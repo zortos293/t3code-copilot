@@ -16,6 +16,7 @@ import {
   type ProviderAdapterRegistryShape,
 } from "../Services/ProviderAdapterRegistry.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
+import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { CursorAdapter } from "../Services/CursorAdapter.ts";
 import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
@@ -33,6 +34,7 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
       ? options.adapters
       : [
           yield* CodexAdapter,
+          yield* CopilotAdapter,
           yield* ClaudeAdapter,
           yield* OpenCodeAdapter,
           ...(cursorAdapterOption._tag === "Some" ? [cursorAdapterOption.value] : []),

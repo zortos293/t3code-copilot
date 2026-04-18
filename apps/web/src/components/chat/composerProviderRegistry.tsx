@@ -158,6 +158,7 @@ function createProviderRegistryEntry(
 
 const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
   codex: createProviderRegistryEntry("codex"),
+  copilot: createProviderRegistryEntry("copilot"),
   claudeAgent: createProviderRegistryEntry("claudeAgent"),
   cursor: createProviderRegistryEntry("cursor"),
   opencode: createProviderRegistryEntry("opencode", {

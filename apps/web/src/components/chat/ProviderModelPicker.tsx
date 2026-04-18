@@ -18,9 +18,14 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
-import { ClaudeAI, CursorIcon, Gemini, Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { ClaudeAI, CursorIcon, Gemini, GitHubIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
+import {
+  deriveCopilotQuotaSummary,
+  findServerProviderModel,
+  formatCopilotBillingMultiplier,
+} from "./copilotQuota";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -32,6 +37,7 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
 
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
+  copilot: GitHubIcon,
   claudeAgent: ClaudeAI,
   opencode: OpenCodeIcon,
   cursor: CursorIcon,
@@ -45,7 +51,9 @@ function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
   fallbackClassName: string,
 ): string {
-  return provider === "claudeAgent" ? "text-[#d97757]" : fallbackClassName;
+  if (provider === "claudeAgent") return "text-[#d97757]";
+  if (provider === "copilot") return "text-foreground/80";
+  return fallbackClassName;
 }
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
@@ -57,16 +65,42 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
+  allowedProviders?: ReadonlyArray<ProviderKind>;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   onProviderModelChange: (provider: ProviderKind, model: string) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const allowedProviders =
+    props.allowedProviders ?? AVAILABLE_PROVIDER_OPTIONS.map((option) => option.value);
+  const availableProviderOptions = AVAILABLE_PROVIDER_OPTIONS.filter((option) =>
+    allowedProviders.includes(option.value),
+  );
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
+  const copilotProvider = props.providers
+    ? (getProviderSnapshot(props.providers, "copilot") ?? null)
+    : null;
+  const copilotQuotaSummary = deriveCopilotQuotaSummary(copilotProvider?.quotaSnapshots);
+  const renderModelOptionContent = (
+    provider: ProviderKind,
+    modelOption: { slug: string; name: string },
+  ) => {
+    if (provider !== "copilot" || !copilotProvider) return modelOption.name;
+    const model = findServerProviderModel(copilotProvider.models, modelOption.slug);
+    if (model?.billingMultiplier == null) return modelOption.name;
+    return (
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate">{modelOption.name}</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground/80">
+          {formatCopilotBillingMultiplier(model.billingMultiplier)}
+        </span>
+      </span>
+    );
+  };
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
     if (!value) return;
@@ -121,10 +155,57 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             )}
           />
           <span className="min-w-0 flex-1 truncate">{selectedModelLabel}</span>
+          {activeProvider === "copilot" && copilotQuotaSummary ? (
+            <span
+              className={cn(
+                "shrink-0 truncate text-muted-foreground/70",
+                props.compact ? "max-w-16 text-[10px]" : "max-w-20 text-[11px]",
+              )}
+            >
+              {copilotQuotaSummary.remainingRequests === null
+                ? "Unlimited"
+                : `${copilotQuotaSummary.remainingRequests} left`}
+            </span>
+          ) : null}
           <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
+        {activeProvider === "copilot" && copilotQuotaSummary ? (
+          <>
+            <div className="min-w-[16rem] px-3 py-2 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium text-foreground">{selectedModelLabel}</div>
+                  <div className="mt-0.5">
+                    {copilotQuotaSummary.remainingRequests === null
+                      ? "Unlimited remaining"
+                      : `${copilotQuotaSummary.remainingRequests} left`}
+                    {copilotQuotaSummary.entitlementRequests > 0
+                      ? ` · ${copilotQuotaSummary.usedRequests} / ${copilotQuotaSummary.entitlementRequests} used`
+                      : ""}
+                  </div>
+                </div>
+                {copilotQuotaSummary.remainingPercentage !== null ? (
+                  <div className="shrink-0 text-right">
+                    {Math.round(copilotQuotaSummary.remainingPercentage)}% remaining
+                  </div>
+                ) : null}
+              </div>
+              {copilotQuotaSummary.remainingPercentage !== null ? (
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-foreground/75 transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, copilotQuotaSummary.remainingPercentage))}%`,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <MenuDivider />
+          </>
+        ) : null}
         {props.lockedProvider !== null ? (
           <MenuGroup>
             <MenuRadioGroup
@@ -137,14 +218,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   value={modelOption.slug}
                   onClick={() => setIsMenuOpen(false)}
                 >
-                  {modelOption.name}
+                  {renderModelOptionContent(props.lockedProvider!, modelOption)}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
           </MenuGroup>
         ) : (
           <>
-            {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
+            {availableProviderOptions.map((option) => {
               const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
               const liveProvider = props.providers
                 ? getProviderSnapshot(props.providers, option.value)
@@ -195,7 +276,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                             value={modelOption.slug}
                             onClick={() => setIsMenuOpen(false)}
                           >
-                            {modelOption.name}
+                            {renderModelOptionContent(option.value, modelOption)}
                           </MenuRadioItem>
                         ))}
                       </MenuRadioGroup>

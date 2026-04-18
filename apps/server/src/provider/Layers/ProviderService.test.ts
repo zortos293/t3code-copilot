@@ -244,18 +244,21 @@ const hasMetricSnapshot = (
 
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
+  const copilot = makeFakeCodexAdapter("copilot");
   const claude = makeFakeCodexAdapter("claudeAgent");
   const cursor = makeFakeCodexAdapter("cursor");
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
       provider === "codex"
         ? Effect.succeed(codex.adapter)
+        : provider === "copilot"
+          ? Effect.succeed(copilot.adapter)
         : provider === "claudeAgent"
           ? Effect.succeed(claude.adapter)
           : provider === "cursor"
             ? Effect.succeed(cursor.adapter)
             : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex", "claudeAgent", "cursor"]),
+    listProviders: () => Effect.succeed(["codex", "copilot", "claudeAgent", "cursor"]),
   };
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
@@ -281,6 +284,7 @@ function makeProviderServiceLayer() {
 
   return {
     codex,
+    copilot,
     claude,
     cursor,
     layer,

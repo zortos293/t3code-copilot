@@ -91,7 +91,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent" | "cursor",
+  provider: "codex" | "copilot" | "claudeAgent" | "cursor" | "opencode",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -1002,6 +1002,22 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("keeps explicit Copilot reasoning overrides on the selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(threadRef, modelSelection("copilot", "gpt-5", { reasoningEffort: "high" }));
+
+    store.setProviderModelOptions(threadRef, "copilot", {
+      reasoningEffort: "medium",
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.copilot).toEqual(
+      modelSelection("copilot", "gpt-5", {
+        reasoningEffort: "medium",
+      }),
+    );
+  });
+
   it("keeps explicit Cursor reset overrides on the selection", () => {
     const store = useComposerDraftStore.getState();
 
@@ -1244,6 +1260,23 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelection("cursor", "gpt-5.4"),
     );
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("cursor");
+  });
+
+  it("stores sticky Copilot model selections", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyModelSelection(
+      modelSelection("copilot", "gpt-5", {
+        reasoningEffort: "medium",
+      }),
+    );
+
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.copilot).toEqual(
+      modelSelection("copilot", "gpt-5", {
+        reasoningEffort: "medium",
+      }),
+    );
+    expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("copilot");
   });
 
   it("applies sticky activeProvider to new drafts", () => {

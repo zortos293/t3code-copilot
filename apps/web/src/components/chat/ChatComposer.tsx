@@ -608,6 +608,8 @@ export const ChatComposer = memo(
     >(
       () => ({
         codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
+        copilot:
+          providerStatuses.find((provider) => provider.provider === "copilot")?.models ?? [],
         claudeAgent:
           providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
         opencode:

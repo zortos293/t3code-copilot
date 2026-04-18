@@ -1,5 +1,6 @@
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  GIT_TEXT_GENERATION_PROVIDERS,
   type ModelSelection,
   type ProviderKind,
   type ServerProvider,
@@ -41,6 +42,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     description: "Save additional Codex model slugs for the picker and `/model` command.",
     placeholder: "your-codex-model-slug",
     example: "gpt-6.7-codex-ultra-preview",
+  },
+  copilot: {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    description: "Save additional GitHub Copilot model slugs for the picker and `/model` command.",
+    placeholder: "your-copilot-model-slug",
+    example: "gpt-5",
   },
   claudeAgent: {
     provider: "claudeAgent",
@@ -177,6 +185,12 @@ export function getCustomModelOptionsByProvider(
       "codex",
       selectedProvider === "codex" ? selectedModel : undefined,
     ),
+    copilot: getAppModelOptions(
+      settings,
+      providers,
+      "copilot",
+      selectedProvider === "copilot" ? selectedModel : undefined,
+    ),
     claudeAgent: getAppModelOptions(
       settings,
       providers,
@@ -201,16 +215,25 @@ export function getCustomModelOptionsByProvider(
 export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
+  allowedProviders?: ReadonlyArray<ProviderKind>,
 ): ModelSelection {
   const selection = settings.textGenerationModelSelection ?? {
     provider: "codex" as const,
     model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
   };
-  const provider = resolveSelectableProvider(providers, selection.provider);
+  const resolvedRequestedProvider =
+    allowedProviders && !allowedProviders.includes(selection.provider)
+      ? (allowedProviders.find((provider) =>
+          providers.find((candidate) => candidate.provider === provider)?.enabled ?? true,
+        ) ??
+        allowedProviders[0] ??
+        GIT_TEXT_GENERATION_PROVIDERS[0])
+      : selection.provider;
+  const provider = resolveSelectableProvider(providers, resolvedRequestedProvider);
 
   // When the provider changed due to fallback (e.g. selected provider was disabled),
   // don't carry over the old provider's model — use the fallback provider's default.
-  const selectedModel = provider === selection.provider ? selection.model : null;
+  const selectedModel = provider === resolvedRequestedProvider ? selection.model : null;
   const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
   const { modelOptionsForDispatch } = getComposerProviderState({
     provider,
@@ -218,7 +241,7 @@ export function resolveAppModelSelectionState(
     models: getProviderModels(providers, provider),
     prompt: "",
     modelOptions: {
-      [provider]: provider === selection.provider ? selection.options : undefined,
+      [provider]: provider === resolvedRequestedProvider ? selection.options : undefined,
     },
   });
 

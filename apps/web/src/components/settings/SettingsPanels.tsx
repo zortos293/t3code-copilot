@@ -11,6 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
+  GIT_TEXT_GENERATION_PROVIDERS,
   PROVIDER_DISPLAY_NAMES,
   type DesktopUpdateChannel,
   type ScopedThreadRef,
@@ -111,7 +112,8 @@ type InstallProviderSettings = {
   serverUrlDescription?: ReactNode;
   serverPasswordPlaceholder?: string;
   serverPasswordDescription?: ReactNode;
-  homePathKey?: "codexHomePath";
+  homePathKey?: "codexHomePath" | "copilotHomePath";
+  homePathLabel?: string;
   homePlaceholder?: string;
   homeDescription?: ReactNode;
 };
@@ -123,8 +125,20 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryPlaceholder: "Codex binary path",
     binaryDescription: "Path to the Codex binary",
     homePathKey: "codexHomePath",
+    homePathLabel: "CODEX_HOME path",
     homePlaceholder: "CODEX_HOME",
     homeDescription: "Optional custom Codex home and config directory.",
+  },
+  {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    binaryPlaceholder: "Bundled CLI path override (optional)",
+    binaryDescription:
+      "Leave blank to let T3 Code auto-detect the bundled GitHub Copilot CLI shipped with your editor.",
+    homePathKey: "copilotHomePath",
+    homePathLabel: "Copilot home path",
+    homePlaceholder: "~/.config/github-copilot",
+    homeDescription: "Optional custom GitHub Copilot home and auth/config directory.",
   },
   {
     provider: "claudeAgent",
@@ -533,6 +547,12 @@ export function GeneralSettingsPanel() {
       settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
       settings.providers.codex.customModels.length > 0,
     ),
+    copilot: Boolean(
+      settings.providers.copilot.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.copilot.binaryPath ||
+      settings.providers.copilot.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.copilot.homePath ||
+      settings.providers.copilot.customModels.length > 0,
+    ),
     claudeAgent: Boolean(
       settings.providers.claudeAgent.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
@@ -558,6 +578,7 @@ export function GeneralSettingsPanel() {
     Record<ProviderKind, string>
   >({
     codex: "",
+    copilot: "",
     claudeAgent: "",
     cursor: "",
     opencode: "",
@@ -593,6 +614,7 @@ export function GeneralSettingsPanel() {
       serverProviders.some((provider) => provider.provider === "cursor"),
   );
   const codexHomePath = settings.providers.codex.homePath;
+  const copilotHomePath = settings.providers.copilot.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
     const exports: string[] = [];
@@ -606,7 +628,11 @@ export function GeneralSettingsPanel() {
     return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
   })();
 
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenerationModelSelection = resolveAppModelSelectionState(
+    settings,
+    serverProviders,
+    GIT_TEXT_GENERATION_PROVIDERS,
+  );
   const textGenProvider = textGenerationModelSelection.provider;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
@@ -784,9 +810,16 @@ export function GeneralSettingsPanel() {
       serverPasswordPlaceholder: providerSettings.serverPasswordPlaceholder,
       serverPasswordDescription: providerSettings.serverPasswordDescription,
       homePathKey: providerSettings.homePathKey,
+      homePathLabel: providerSettings.homePathLabel,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
       binaryPathValue: providerConfig.binaryPath,
+      homePathValue:
+        providerSettings.provider === "codex"
+          ? codexHomePath
+          : providerSettings.provider === "copilot"
+            ? copilotHomePath
+            : "",
       serverUrlValue: "serverUrl" in providerConfig ? providerConfig.serverUrl : "",
       serverPasswordValue: "serverPassword" in providerConfig ? providerConfig.serverPassword : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
@@ -1080,6 +1113,7 @@ export function GeneralSettingsPanel() {
                 model={textGenModel}
                 lockedProvider={null}
                 providers={serverProviders}
+                allowedProviders={GIT_TEXT_GENERATION_PROVIDERS}
                 modelOptionsByProvider={gitModelOptionsByProvider}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
@@ -1091,6 +1125,7 @@ export function GeneralSettingsPanel() {
                         textGenerationModelSelection: createModelSelection(provider, model),
                       },
                       serverProviders,
+                      GIT_TEXT_GENERATION_PROVIDERS,
                     ),
                   });
                 }}
@@ -1120,6 +1155,7 @@ export function GeneralSettingsPanel() {
                         ),
                       },
                       serverProviders,
+                      GIT_TEXT_GENERATION_PROVIDERS,
                     ),
                   });
                 }}
@@ -1386,19 +1422,21 @@ export function GeneralSettingsPanel() {
                           className="block"
                         >
                           <span className="text-xs font-medium text-foreground">
-                            CODEX_HOME path
+                            {providerCard.homePathLabel ?? "Home path"}
                           </span>
                           <Input
                             id={`provider-install-${providerCard.homePathKey}`}
                             className="mt-1.5"
-                            value={codexHomePath}
+                            value={providerCard.homePathValue}
                             onChange={(event) =>
                               updateSettings({
                                 providers: {
                                   ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
-                                    homePath: event.target.value,
+                                  [providerCard.provider]: {
+                                    ...settings.providers[providerCard.provider],
+                                    ...("homePath" in settings.providers[providerCard.provider]
+                                      ? { homePath: event.target.value }
+                                      : {}),
                                   },
                                 },
                               })
@@ -1558,6 +1596,8 @@ export function GeneralSettingsPanel() {
                           placeholder={
                             providerCard.provider === "codex"
                               ? "gpt-6.7-codex-ultra-preview"
+                              : providerCard.provider === "copilot"
+                                ? "gpt-5"
                               : providerCard.provider === "opencode"
                                 ? "openai/gpt-5"
                                 : "claude-sonnet-5-0"

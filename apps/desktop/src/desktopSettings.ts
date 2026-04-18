@@ -65,17 +65,20 @@ export function readDesktopSettings(settingsPath: string, appVersion: string): D
         ? parsed.updateChannel
         : null;
     const isLegacySettings = parsed.updateChannelConfiguredByUser === undefined;
-    const updateChannelConfiguredByUser =
-      parsed.updateChannelConfiguredByUser === true ||
-      (isLegacySettings && parsedUpdateChannel === "nightly");
+    const updateChannelConfiguredByUser = parsed.updateChannelConfiguredByUser === true;
+    const updateChannel =
+      parsedUpdateChannel !== null &&
+      (updateChannelConfiguredByUser ||
+        (isLegacySettings &&
+          (parsedUpdateChannel === defaultSettings.updateChannel ||
+            (defaultSettings.updateChannel === "nightly" && parsedUpdateChannel === "latest"))))
+        ? parsedUpdateChannel
+        : defaultSettings.updateChannel;
 
     return {
       serverExposureMode:
         parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
-      updateChannel:
-        updateChannelConfiguredByUser && parsedUpdateChannel !== null
-          ? parsedUpdateChannel
-          : defaultSettings.updateChannel,
+      updateChannel,
       updateChannelConfiguredByUser,
     };
   } catch {

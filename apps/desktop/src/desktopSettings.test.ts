@@ -108,7 +108,7 @@ describe("desktopSettings", () => {
     });
   });
 
-  it("migrates legacy implicit stable settings to nightly when running a nightly build", () => {
+  it("preserves legacy implicit stable settings on nightly builds", () => {
     const settingsPath = makeSettingsPath();
     fs.writeFileSync(
       settingsPath,
@@ -121,7 +121,7 @@ describe("desktopSettings", () => {
 
     expect(readDesktopSettings(settingsPath, "0.0.17-nightly.20260415.1")).toEqual({
       serverExposureMode: "local-only",
-      updateChannel: "nightly",
+      updateChannel: "latest",
       updateChannelConfiguredByUser: false,
     });
   });

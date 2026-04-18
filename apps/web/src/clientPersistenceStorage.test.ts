@@ -1,4 +1,8 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  type PersistedSavedEnvironmentRecord,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");
@@ -75,6 +79,48 @@ describe("clientPersistenceStorage", () => {
           bearerToken: "bearer-token",
         },
       ],
+    });
+  });
+
+  it("migrates legacy browser client settings into the current storage key", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "t3code:app-settings:v1",
+      JSON.stringify({
+        confirmThreadArchive: false,
+        sidebarProjectGroupingMode: "repository_path",
+        sidebarProjectGroupingOverrides: {
+          "env:/workspace/project-a": "separate",
+        },
+        sidebarProjectSortOrder: "manual",
+        timestampFormat: "24-hour",
+      }),
+    );
+
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBrowserClientSettings } = await import(
+      "./clientPersistenceStorage"
+    );
+
+    expect(readBrowserClientSettings()).toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
+      confirmThreadArchive: false,
+      sidebarProjectGroupingMode: "repository_path",
+      sidebarProjectGroupingOverrides: {
+        "env:/workspace/project-a": "separate",
+      },
+      sidebarProjectSortOrder: "manual",
+      timestampFormat: "24-hour",
+    });
+    expect(testWindow.localStorage.getItem("t3code:app-settings:v1")).toBeNull();
+    expect(JSON.parse(testWindow.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY)!)).toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
+      confirmThreadArchive: false,
+      sidebarProjectGroupingMode: "repository_path",
+      sidebarProjectGroupingOverrides: {
+        "env:/workspace/project-a": "separate",
+      },
+      sidebarProjectSortOrder: "manual",
+      timestampFormat: "24-hour",
     });
   });
 });

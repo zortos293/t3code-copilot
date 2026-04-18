@@ -5,6 +5,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
+  ServerProviderQuotaSnapshot,
   ServerProviderState,
 } from "@t3tools/contracts";
 import { Effect, Stream } from "effect";
@@ -26,6 +27,7 @@ export interface ProviderProbeResult {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProviderAuth;
   readonly message?: string;
+  readonly quotaSnapshots?: ReadonlyArray<ServerProviderQuotaSnapshot>;
 }
 
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
@@ -96,7 +98,7 @@ export function extractAuthBoolean(value: unknown): boolean | undefined {
 }
 
 export function parseGenericCliVersion(output: string): string | null {
-  const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
+  const match = output.match(/\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/);
   return match?.[1] ?? null;
 }
 
@@ -146,6 +148,7 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
+    ...(input.probe.quotaSnapshots ? { quotaSnapshots: [...input.probe.quotaSnapshots] } : {}),
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
   };

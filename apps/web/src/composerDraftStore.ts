@@ -5,6 +5,7 @@ import {
   type CursorReasoningOption,
   ClaudeAgentEffort,
   CodexReasoningEffort,
+  type CopilotModelOptions,
   type EnvironmentId,
   ModelSelection,
   ProjectId,
@@ -531,7 +532,11 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
 }
 
 function normalizeProviderKind(value: unknown): ProviderKind | null {
-  return value === "codex" || value === "claudeAgent" || value === "cursor" || value === "opencode"
+  return value === "codex" ||
+    value === "copilot" ||
+    value === "claudeAgent" ||
+    value === "cursor" ||
+    value === "opencode"
     ? value
     : null;
 }
@@ -545,6 +550,10 @@ function normalizeProviderModelOptions(
   const codexCandidate =
     candidate?.codex && typeof candidate.codex === "object"
       ? (candidate.codex as Record<string, unknown>)
+      : null;
+  const copilotCandidate =
+    candidate?.copilot && typeof candidate.copilot === "object"
+      ? (candidate.copilot as Record<string, unknown>)
       : null;
   const claudeCandidate =
     candidate?.claudeAgent && typeof candidate.claudeAgent === "object"
@@ -584,6 +593,18 @@ function normalizeProviderModelOptions(
           ...(codexReasoningEffort !== undefined ? { reasoningEffort: codexReasoningEffort } : {}),
           ...(codexFastMode !== undefined ? { fastMode: codexFastMode } : {}),
         }
+      : undefined;
+
+  const copilotReasoningEffort = isCodexReasoningEffort(copilotCandidate?.reasoningEffort)
+    ? copilotCandidate.reasoningEffort
+    : provider === "copilot"
+      ? isCodexReasoningEffort(legacy?.effort)
+        ? legacy.effort
+        : undefined
+      : undefined;
+  const copilot: CopilotModelOptions | undefined =
+    copilotReasoningEffort !== undefined
+      ? { reasoningEffort: copilotReasoningEffort }
       : undefined;
 
   const claudeThinking =
@@ -670,11 +691,12 @@ function normalizeProviderModelOptions(
         }
       : undefined;
 
-  if (!codex && !claude && cursor === undefined && !opencode) {
+  if (!codex && !copilot && !claude && cursor === undefined && !opencode) {
     return null;
   }
   return {
     ...(codex ? { codex } : {}),
+    ...(copilot ? { copilot } : {}),
     ...(claude ? { claudeAgent: claude } : {}),
     ...(cursor !== undefined ? { cursor } : {}),
     ...(opencode ? { opencode } : {}),
@@ -766,7 +788,7 @@ function legacyToModelSelectionByProvider(
   const result: Partial<Record<ProviderKind, ModelSelection>> = {};
   // Add entries from the options bag (for non-active providers)
   if (modelOptions) {
-    for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
+    for (const provider of ["codex", "copilot", "claudeAgent", "cursor", "opencode"] as const) {
       const options = modelOptions[provider];
       if (options && Object.keys(options).length > 0) {
         result[provider] = createModelSelection(
@@ -2312,7 +2334,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = { ...base.modelSelectionByProvider };
-            for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
+            for (const provider of ["codex", "copilot", "claudeAgent", "cursor", "opencode"] as const) {
               // Only touch providers explicitly present in the input
               if (!normalizedOpts || !(provider in normalizedOpts)) continue;
               const opts = normalizedOpts[provider];

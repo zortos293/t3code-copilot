@@ -219,6 +219,84 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[recreatedProject2]).toBe(false);
   });
 
+  it("syncProjects replays persisted physical project order for grouped logical rows", () => {
+    const primaryProjectKey = "environment-local:/tmp/project-a";
+    const secondaryProjectKey = "environment-remote:/tmp/project-a";
+    const otherProjectKey = "environment-local:/tmp/project-b";
+    const initialState = makeUiState({
+      projectOrder: [secondaryProjectKey, primaryProjectKey, otherProjectKey],
+    });
+
+    const next = syncProjects(initialState, [
+      { key: primaryProjectKey, cwd: "/tmp/project-a" },
+      { key: secondaryProjectKey, cwd: "/tmp/project-a" },
+      { key: otherProjectKey, cwd: "/tmp/project-b" },
+    ]);
+
+    expect(next.projectOrder).toEqual([secondaryProjectKey, primaryProjectKey, otherProjectKey]);
+  });
+
+  it("syncProjects replays grouped expansion state by logical id when cwd changes", () => {
+    const logicalProjectId = "github.com/t3tools/project-a";
+    const previousProjectKey = "environment-local:/tmp/project-a";
+    const recreatedProjectKey = "environment-local:/tmp/project-a-renamed";
+
+    const initialState = syncProjects(
+      makeUiState({
+        projectExpandedById: {
+          [previousProjectKey]: false,
+        },
+        projectOrder: [previousProjectKey],
+      }),
+      [{ key: previousProjectKey, logicalId: logicalProjectId, cwd: "/tmp/project-a" }],
+    );
+
+    const next = syncProjects(initialState, [
+      {
+        key: recreatedProjectKey,
+        logicalId: logicalProjectId,
+        cwd: "/tmp/project-a-renamed",
+      },
+    ]);
+
+    expect(next.projectOrder).toEqual([recreatedProjectKey]);
+    expect(next.projectExpandedById[recreatedProjectKey]).toBe(false);
+  });
+
+  it("syncProjects replays grouped order by logical id when cwd changes", () => {
+    const logicalProjectA = "github.com/t3tools/project-a";
+    const logicalProjectB = "github.com/t3tools/project-b";
+    const previousProjectKeyA = "environment-local:/tmp/project-a";
+    const previousProjectKeyB = "environment-local:/tmp/project-b";
+    const recreatedProjectKeyA = "environment-remote:/tmp/project-a-renamed";
+    const recreatedProjectKeyB = "environment-local:/tmp/project-b-renamed";
+
+    const initialState = syncProjects(
+      makeUiState({
+        projectOrder: [previousProjectKeyB, previousProjectKeyA],
+      }),
+      [
+        { key: previousProjectKeyA, logicalId: logicalProjectA, cwd: "/tmp/project-a" },
+        { key: previousProjectKeyB, logicalId: logicalProjectB, cwd: "/tmp/project-b" },
+      ],
+    );
+
+    const next = syncProjects(initialState, [
+      {
+        key: recreatedProjectKeyA,
+        logicalId: logicalProjectA,
+        cwd: "/tmp/project-a-renamed",
+      },
+      {
+        key: recreatedProjectKeyB,
+        logicalId: logicalProjectB,
+        cwd: "/tmp/project-b-renamed",
+      },
+    ]);
+
+    expect(next.projectOrder).toEqual([recreatedProjectKeyB, recreatedProjectKeyA]);
+  });
+
   it("syncProjects returns a new state when only project cwd changes", () => {
     const project1 = ProjectId.make("project-1");
     const initialState = syncProjects(

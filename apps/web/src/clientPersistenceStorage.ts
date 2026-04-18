@@ -1,5 +1,6 @@
 import {
   ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   type ClientSettings,
   type EnvironmentId as EnvironmentIdValue,
@@ -11,6 +12,7 @@ import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorag
 
 export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "t3code:saved-environment-registry:v1";
+const LEGACY_CLIENT_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 
 const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
@@ -47,15 +49,88 @@ function toPersistedSavedEnvironmentRecord(
   };
 }
 
+function readLegacyBrowserClientSettings(): ClientSettings | null {
+  const raw = window.localStorage.getItem(LEGACY_CLIENT_SETTINGS_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const sidebarProjectGroupingOverrides =
+      parsed.sidebarProjectGroupingOverrides &&
+      typeof parsed.sidebarProjectGroupingOverrides === "object" &&
+      !Array.isArray(parsed.sidebarProjectGroupingOverrides)
+        ? Object.fromEntries(
+            Object.entries(parsed.sidebarProjectGroupingOverrides).filter(
+              ([key, value]) =>
+                typeof key === "string" &&
+                key.length > 0 &&
+                (value === "repository" || value === "repository_path" || value === "separate"),
+            ),
+          )
+        : undefined;
+
+    const migrated = Schema.decodeSync(ClientSettingsSchema)({
+      ...DEFAULT_CLIENT_SETTINGS,
+      ...(typeof parsed.confirmThreadArchive === "boolean"
+        ? { confirmThreadArchive: parsed.confirmThreadArchive }
+        : {}),
+      ...(typeof parsed.confirmThreadDelete === "boolean"
+        ? { confirmThreadDelete: parsed.confirmThreadDelete }
+        : {}),
+      ...(typeof parsed.diffWordWrap === "boolean" ? { diffWordWrap: parsed.diffWordWrap } : {}),
+      ...(parsed.sidebarProjectGroupingMode === "repository" ||
+      parsed.sidebarProjectGroupingMode === "repository_path" ||
+      parsed.sidebarProjectGroupingMode === "separate"
+        ? { sidebarProjectGroupingMode: parsed.sidebarProjectGroupingMode }
+        : {}),
+      ...(sidebarProjectGroupingOverrides ? { sidebarProjectGroupingOverrides } : {}),
+      ...(parsed.sidebarProjectSortOrder === "updated_at" ||
+      parsed.sidebarProjectSortOrder === "created_at" ||
+      parsed.sidebarProjectSortOrder === "manual"
+        ? { sidebarProjectSortOrder: parsed.sidebarProjectSortOrder }
+        : {}),
+      ...(parsed.sidebarThreadSortOrder === "updated_at" ||
+      parsed.sidebarThreadSortOrder === "created_at"
+        ? { sidebarThreadSortOrder: parsed.sidebarThreadSortOrder }
+        : {}),
+      ...(parsed.timestampFormat === "locale" ||
+      parsed.timestampFormat === "12-hour" ||
+      parsed.timestampFormat === "24-hour"
+        ? { timestampFormat: parsed.timestampFormat }
+        : {}),
+    });
+
+    window.localStorage.setItem(CLIENT_SETTINGS_STORAGE_KEY, JSON.stringify(migrated));
+    window.localStorage.removeItem(LEGACY_CLIENT_SETTINGS_STORAGE_KEY);
+    return migrated;
+  } catch {
+    return null;
+  }
+}
+
 export function readBrowserClientSettings(): ClientSettings | null {
   if (!hasWindow()) {
     return null;
   }
 
   try {
-    return getLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, ClientSettingsSchema);
+    const settings = getLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, ClientSettingsSchema);
+    return settings ?? readLegacyBrowserClientSettings();
   } catch {
-    return null;
+    try {
+      const raw = window.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<ClientSettings>;
+        return Schema.decodeSync(ClientSettingsSchema)({
+          ...DEFAULT_CLIENT_SETTINGS,
+          ...parsed,
+        });
+      }
+    } catch {}
+
+    return readLegacyBrowserClientSettings();
   }
 }
 

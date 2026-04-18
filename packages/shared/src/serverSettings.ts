@@ -1,13 +1,11 @@
 import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ServerSettings,
-  type ClaudeModelOptions,
-  type CodexModelOptions,
-  type CursorModelOptions,
-  type OpenCodeModelOptions,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { Schema } from "effect";
 import { deepMerge } from "./Struct.ts";
+import { createModelSelection } from "./model.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
@@ -53,9 +51,6 @@ function shouldReplaceTextGenerationModelSelection(
   return Boolean(patch && (patch.provider !== undefined || patch.model !== undefined));
 }
 
-const withModelSelectionOptions = <Options>(options: Options | undefined) =>
-  options ? { options } : {};
-
 /**
  * Applies a server settings patch while treating textGenerationModelSelection as
  * replace-on-provider/model updates. This prevents stale nested options from
@@ -72,39 +67,15 @@ export function applyServerSettingsPatch(
   }
 
   const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
-  const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
+  const model =
+    selectionPatch.model ??
+    (selectionPatch.provider !== undefined &&
+    selectionPatch.provider !== current.textGenerationModelSelection.provider
+      ? DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider]
+      : current.textGenerationModelSelection.model);
 
   return {
     ...next,
-    textGenerationModelSelection:
-      provider === "codex"
-        ? {
-            provider,
-            model,
-            ...withModelSelectionOptions(selectionPatch.options as CodexModelOptions | undefined),
-          }
-        : provider === "claudeAgent"
-          ? {
-              provider,
-              model,
-              ...withModelSelectionOptions(
-                selectionPatch.options as ClaudeModelOptions | undefined,
-              ),
-            }
-          : provider === "cursor"
-            ? {
-                provider,
-                model,
-                ...withModelSelectionOptions(
-                  selectionPatch.options as CursorModelOptions | undefined,
-                ),
-              }
-            : {
-                provider,
-                model,
-                ...withModelSelectionOptions(
-                  selectionPatch.options as OpenCodeModelOptions | undefined,
-                ),
-              },
+    textGenerationModelSelection: createModelSelection(provider, model, selectionPatch.options),
   };
 }

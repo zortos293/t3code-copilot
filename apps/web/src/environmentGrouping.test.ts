@@ -14,6 +14,7 @@ import {
   deriveLogicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
+  deriveProjectGroupLabel,
   resolveProjectGroupingMode,
 } from "./logicalProject";
 import type { Project, SidebarThreadSummary } from "./types";
@@ -456,6 +457,152 @@ describe("environment grouping", () => {
       expect(projects).toHaveLength(4);
       const names = projects.map((p) => p.name).toSorted();
       expect(names).toEqual(["local-only", "remote-only", "shared-repo", "shared-repo"]);
+    });
+  });
+
+  describe("deriveProjectGroupLabel", () => {
+    it("prefers a renamed representative project title over shared repository names", () => {
+      expect(
+        deriveProjectGroupLabel({
+          representative: {
+            name: "My Renamed Workspace",
+            repositoryIdentity: {
+              canonicalKey: SHARED_REPO_CANONICAL_KEY,
+              name: "shared-repo",
+              displayName: "Shared Repo",
+              locator: {
+                source: "git-remote",
+                remoteName: "origin",
+                remoteUrl: "https://github.com/example/shared-repo.git",
+              },
+            },
+          },
+          members: [
+            {
+              name: "My Renamed Workspace",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+            {
+              name: "shared-repo",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+          ],
+        }),
+      ).toBe("My Renamed Workspace");
+    });
+
+    it("keeps shared repository display names for unrenamed grouped projects", () => {
+      expect(
+        deriveProjectGroupLabel({
+          representative: {
+            name: "shared-repo",
+            repositoryIdentity: {
+              canonicalKey: SHARED_REPO_CANONICAL_KEY,
+              name: "shared-repo",
+              displayName: "Shared Repo",
+              locator: {
+                source: "git-remote",
+                remoteName: "origin",
+                remoteUrl: "https://github.com/example/shared-repo.git",
+              },
+            },
+          },
+          members: [
+            {
+              name: "shared-repo",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+            {
+              name: "shared-repo",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+          ],
+        }),
+      ).toBe("Shared Repo");
+    });
+
+    it("uses a renamed non-representative member title when it is the only custom label", () => {
+      expect(
+        deriveProjectGroupLabel({
+          representative: {
+            name: "shared-repo",
+            repositoryIdentity: {
+              canonicalKey: SHARED_REPO_CANONICAL_KEY,
+              name: "shared-repo",
+              displayName: "Shared Repo",
+              locator: {
+                source: "git-remote",
+                remoteName: "origin",
+                remoteUrl: "https://github.com/example/shared-repo.git",
+              },
+            },
+          },
+          members: [
+            {
+              name: "shared-repo",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+            {
+              name: "Remote Workspace",
+              repositoryIdentity: {
+                canonicalKey: SHARED_REPO_CANONICAL_KEY,
+                name: "shared-repo",
+                displayName: "Shared Repo",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/example/shared-repo.git",
+                },
+              },
+            },
+          ],
+        }),
+      ).toBe("Remote Workspace");
     });
   });
 

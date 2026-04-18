@@ -4,6 +4,7 @@ import { Cause, Effect, FileSystem, Path, Schema } from "effect";
 
 export const PROVIDER_CACHE_IDS = [
   "codex",
+  "copilot",
   "claudeAgent",
   "opencode",
   "cursor",
@@ -55,6 +56,9 @@ export const hydrateCachedProvider = (input: {
     checkedAt: input.cachedProvider.checkedAt,
     slashCommands: input.cachedProvider.slashCommands,
     skills: input.cachedProvider.skills,
+    ...(input.cachedProvider.quotaSnapshots
+      ? { quotaSnapshots: input.cachedProvider.quotaSnapshots }
+      : {}),
   };
 
   return input.cachedProvider.message
