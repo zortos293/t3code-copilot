@@ -54,6 +54,7 @@ import {
   insertInlineTerminalContextPlaceholder,
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
+import { createModelSelection } from "../../modelSelectionUtils";
 import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -74,7 +75,6 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderRegistry";
-import { getProviderModelOptions } from "../../modelSelectionUtils";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
@@ -130,7 +130,6 @@ const runtimeModeConfig: Record<
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
-import { createModelSelection } from "../../modelSelectionUtils";
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -595,9 +594,7 @@ export const ChatComposer = memo(
         createModelSelection({
           provider: selectedProvider,
           model: selectedModel,
-          ...(selectedModelOptionsForDispatch !== undefined
-            ? { options: selectedModelOptionsForDispatch }
-            : {}),
+          ...(selectedModelOptionsForDispatch ? { options: selectedModelOptionsForDispatch } : {}),
         }),
       [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
     );
@@ -614,7 +611,7 @@ export const ChatComposer = memo(
       [providerStatuses],
     );
     const selectedModelForPickerWithCustomFallback = useMemo(() => {
-      const currentOptions = modelOptionsByProvider[selectedProvider] ?? [];
+      const currentOptions = modelOptionsByProvider[selectedProvider];
       return currentOptions.some((option) => option.slug === selectedModelForPicker)
         ? selectedModelForPicker
         : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
@@ -624,7 +621,7 @@ export const ChatComposer = memo(
         AVAILABLE_PROVIDER_OPTIONS.filter(
           (option) => lockedProvider === null || option.value === lockedProvider,
         ).flatMap((option) =>
-          (modelOptionsByProvider[option.value] ?? []).map(({ slug, name }) => ({
+          modelOptionsByProvider[option.value].map(({ slug, name }) => ({
             provider: option.value,
             providerLabel: option.label,
             slug,
@@ -904,7 +901,7 @@ export const ChatComposer = memo(
       ...(routeKind === "draft" && draftId ? { draftId } : {}),
       model: selectedModel,
       models: selectedProviderModels,
-      modelOptions: getProviderModelOptions(selectedProvider, composerModelOptions),
+      modelOptions: composerModelOptions?.[selectedProvider],
       prompt,
       onPromptChange: setPromptFromTraits,
     });
@@ -914,7 +911,7 @@ export const ChatComposer = memo(
       ...(routeKind === "draft" && draftId ? { draftId } : {}),
       model: selectedModel,
       models: selectedProviderModels,
-      modelOptions: getProviderModelOptions(selectedProvider, composerModelOptions),
+      modelOptions: composerModelOptions?.[selectedProvider],
       prompt,
       onPromptChange: setPromptFromTraits,
     });

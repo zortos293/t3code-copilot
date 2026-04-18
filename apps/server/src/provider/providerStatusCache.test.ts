@@ -8,7 +8,7 @@ import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
-} from "./providerStatusCache";
+} from "./providerStatusCache.ts";
 
 const makeProvider = (
   provider: ServerProvider["provider"],
@@ -104,10 +104,154 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         status: cachedCodex.status,
         auth: cachedCodex.auth,
         checkedAt: cachedCodex.checkedAt,
-        quotaSnapshots: cachedCodex.quotaSnapshots,
         slashCommands: cachedCodex.slashCommands,
         skills: cachedCodex.skills,
         message: cachedCodex.message,
+      },
+    );
+  });
+
+  it("preserves cached runtime-discovered models during cache hydration", () => {
+    const cachedCopilot = makeProvider("copilot", {
+      models: [
+        {
+          slug: "gpt-5",
+          name: "GPT-5",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "claude-opus-4.7",
+          name: "Claude Opus 4.7",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+    const fallbackCopilot = makeProvider("copilot", {
+      models: [
+        {
+          slug: "gpt-5",
+          name: "GPT-5 fallback",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCopilot,
+        fallbackProvider: fallbackCopilot,
+      }).models,
+      cachedCopilot.models,
+    );
+  });
+
+  it("does not resurrect removed cached custom models during cache hydration", () => {
+    const cachedClaude = makeProvider("claudeAgent", {
+      models: [
+        {
+          slug: "claude-custom-removed",
+          name: "Claude Custom Removed",
+          isCustom: true,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "claude-runtime-discovered",
+          name: "Claude Runtime Discovered",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+    const fallbackClaude = makeProvider("claudeAgent", {
+      models: [
+        {
+          slug: "claude-opus-4-6",
+          name: "Claude Opus 4.6",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedClaude,
+        fallbackProvider: fallbackClaude,
+      }).models,
+      [fallbackClaude.models[0]!, cachedClaude.models[1]!],
+    );
+  });
+
+  it("preserves missing quota snapshots during cache hydration", () => {
+    const cachedCopilot = makeProvider("copilot", {
+      quotaSnapshots: undefined,
+    });
+    const fallbackCopilot = makeProvider("copilot", {
+      quotaSnapshots: [
+        {
+          key: "premium_interactions",
+          entitlementRequests: 100,
+          usedRequests: 25,
+          remainingPercentage: 75,
+          overage: 0,
+          overageAllowedWithExhaustedQuota: false,
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCopilot,
+        fallbackProvider: fallbackCopilot,
+      }),
+      {
+        ...fallbackCopilot,
+        installed: cachedCopilot.installed,
+        version: cachedCopilot.version,
+        status: cachedCopilot.status,
+        auth: cachedCopilot.auth,
+        checkedAt: cachedCopilot.checkedAt,
+        slashCommands: cachedCopilot.slashCommands,
+        skills: cachedCopilot.skills,
       },
     );
   });

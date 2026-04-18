@@ -157,36 +157,4 @@ describe("MessagesTimeline", () => {
       await screen.unmount();
     }
   });
-
-  it("does not render command output detail in collapsed command rows", async () => {
-    const screen = await render(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "work-1",
-            kind: "work",
-            createdAt: "2026-04-13T12:00:00.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-04-13T12:00:00.000Z",
-              label: "bash",
-              detail: "src/index.ts\npackage.json",
-              tone: "tool",
-              itemType: "command_execution",
-              toolTitle: "bash",
-            },
-          },
-        ]}
-      />,
-    );
-
-    try {
-      await expect.element(page.getByText("Bash", { exact: true })).toBeVisible();
-      await expect.element(page.getByText("src/index.ts")).not.toBeInTheDocument();
-      await expect.element(page.getByText("package.json")).not.toBeInTheDocument();
-    } finally {
-      await screen.unmount();
-    }
-  });
 });

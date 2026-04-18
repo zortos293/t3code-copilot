@@ -80,6 +80,7 @@ function createBaseServerConfig(): ServerConfig {
         auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
         models: [],
+        quotaSnapshots: [],
         slashCommands: [],
         skills: [],
       },
@@ -99,7 +100,7 @@ function createBaseServerConfig(): ServerConfig {
       providers: {
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
         copilot: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
-        claudeAgent: { enabled: true, binaryPath: "", customModels: [] },
+        claudeAgent: { enabled: true, binaryPath: "", customModels: [], launchArgs: "" },
       },
     },
   };

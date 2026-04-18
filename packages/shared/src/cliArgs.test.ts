@@ -1,0 +1,222 @@
+import { describe, expect, it } from "vitest";
+
+import { parseCliArgs } from "./cliArgs.ts";
+
+describe("parseCliArgs", () => {
+  it("returns empty result for empty string", () => {
+    expect(parseCliArgs("")).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it("returns empty result for whitespace-only string", () => {
+    expect(parseCliArgs("   ")).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it("returns empty result for empty array", () => {
+    expect(parseCliArgs([])).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it("parses --chrome boolean flag", () => {
+    expect(parseCliArgs("--chrome")).toEqual({
+      flags: { chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("parses --chrome with --verbose", () => {
+    expect(parseCliArgs("--chrome --verbose")).toEqual({
+      flags: { chrome: null, verbose: null },
+      positionals: [],
+    });
+  });
+
+  it("parses --effort with a value", () => {
+    expect(parseCliArgs("--effort high")).toEqual({
+      flags: { effort: "high" },
+      positionals: [],
+    });
+  });
+
+  it("parses --chrome --effort high --debug", () => {
+    expect(parseCliArgs("--chrome --effort high --debug")).toEqual({
+      flags: { chrome: null, effort: "high", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("parses --model with full model name", () => {
+    expect(parseCliArgs("--model claude-sonnet-4-6")).toEqual({
+      flags: { model: "claude-sonnet-4-6" },
+      positionals: [],
+    });
+  });
+
+  it("parses --append-system-prompt with value and --chrome", () => {
+    expect(parseCliArgs("--append-system-prompt always-think-step-by-step --chrome")).toEqual({
+      flags: { "append-system-prompt": "always-think-step-by-step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("parses --max-budget-usd with numeric value", () => {
+    expect(parseCliArgs("--chrome --max-budget-usd 5.00")).toEqual({
+      flags: { chrome: null, "max-budget-usd": "5.00" },
+      positionals: [],
+    });
+  });
+
+  it("parses --effort=high syntax", () => {
+    expect(parseCliArgs("--effort=high")).toEqual({
+      flags: { effort: "high" },
+      positionals: [],
+    });
+  });
+
+  it("parses --key=value mixed with boolean flags", () => {
+    expect(parseCliArgs("--chrome --model=claude-sonnet-4-6 --debug")).toEqual({
+      flags: { chrome: null, model: "claude-sonnet-4-6", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("collects positional arguments", () => {
+    expect(parseCliArgs("1.2.3")).toEqual({
+      flags: {},
+      positionals: ["1.2.3"],
+    });
+  });
+
+  it("collects positionals mixed with flags (argv array)", () => {
+    expect(parseCliArgs(["1.2.3", "--root", "/path", "--github-output"])).toEqual({
+      flags: { root: "/path", "github-output": null },
+      positionals: ["1.2.3"],
+    });
+  });
+
+  it("handles extra whitespace between tokens", () => {
+    expect(parseCliArgs("  --chrome   --verbose  ")).toEqual({
+      flags: { chrome: null, verbose: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves quoted values in string input", () => {
+    expect(parseCliArgs('--append-system-prompt "always think step by step" --chrome')).toEqual({
+      flags: { "append-system-prompt": "always think step by step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves escaped whitespace in string input", () => {
+    expect(
+      parseCliArgs(String.raw`--append-system-prompt always\ think\ step\ by\ step --chrome`),
+    ).toEqual({
+      flags: { "append-system-prompt": "always think step by step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves literal backslashes in Windows-style paths", () => {
+    expect(parseCliArgs(String.raw`--root C:\Users\testuser\project --chrome`)).toEqual({
+      flags: { root: String.raw`C:\Users\testuser\project`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves literal backslashes inside quoted values", () => {
+    expect(parseCliArgs(String.raw`--root "C:\Program Files\Claude" --chrome`)).toEqual({
+      flags: { root: String.raw`C:\Program Files\Claude`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted Windows paths ending in a backslash separate from following args", () => {
+    expect(parseCliArgs('--root "C:\\Program Files\\Claude\\" --chrome')).toEqual({
+      flags: { root: "C:\\Program Files\\Claude\\", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted positional Windows paths ending in a backslash separate from following args", () => {
+    expect(parseCliArgs('"C:\\Program Files\\Claude\\" --chrome')).toEqual({
+      flags: { chrome: null },
+      positionals: ["C:\\Program Files\\Claude\\"],
+    });
+  });
+
+  it("still unescapes escaped quotes and backslashes in string input", () => {
+    expect(
+      parseCliArgs(String.raw`--append-system-prompt "say \"hi\" from C:\\tools" --chrome`),
+    ).toEqual({
+      flags: { "append-system-prompt": String.raw`say "hi" from C:\tools`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("parses quoted values in --key=value syntax", () => {
+    expect(parseCliArgs('--launch-arg="--project Claude Code" --debug')).toEqual({
+      flags: { "launch-arg": "--project Claude Code", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted --key value arguments starting with -- as values", () => {
+    expect(parseCliArgs('--launch-arg "--project Claude Code" --debug')).toEqual({
+      flags: { "launch-arg": "--project Claude Code", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted dangerous-skip flag strings as values", () => {
+    expect(parseCliArgs('--launch-arg "--dangerously-skip-permissions" --debug')).toEqual({
+      flags: { "launch-arg": "--dangerously-skip-permissions", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("treats quoted standalone double-dash tokens as positional values rather than flags", () => {
+    expect(parseCliArgs('"--dangerously-skip-permissions" --debug')).toEqual({
+      flags: { debug: null },
+      positionals: ["--dangerously-skip-permissions"],
+    });
+  });
+
+  it("preserves intentionally empty quoted values", () => {
+    expect(parseCliArgs('--append-system-prompt "" --chrome')).toEqual({
+      flags: { "append-system-prompt": "", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("ignores bare -- with no flag name", () => {
+    expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
+  });
+
+  it("boolean flag does not consume next token as value", () => {
+    expect(parseCliArgs(["--github-output", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
+      {
+        flags: { "github-output": null },
+        positionals: ["1.2.3"],
+      },
+    );
+  });
+
+  it("non-boolean flag still consumes next token", () => {
+    expect(parseCliArgs(["--root", "/path", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
+      {
+        flags: { root: "/path" },
+        positionals: ["1.2.3"],
+      },
+    );
+  });
+
+  it("mixes boolean and value flags with positionals", () => {
+    expect(
+      parseCliArgs(["--github-output", "--root", "/path", "1.2.3"], {
+        booleanFlags: ["github-output"],
+      }),
+    ).toEqual({
+      flags: { "github-output": null, root: "/path" },
+      positionals: ["1.2.3"],
+    });
+  });
+});

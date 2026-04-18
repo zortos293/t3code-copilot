@@ -35,6 +35,20 @@ export const hydrateCachedProvider = (input: {
     return input.fallbackProvider;
   }
 
+  const mergedModels = (() => {
+    const modelsBySlug = new Map<string, ServerProvider["models"][number]>();
+    for (const model of input.fallbackProvider.models) {
+      modelsBySlug.set(model.slug, model);
+    }
+    for (const model of input.cachedProvider.models) {
+      if (model.isCustom && !modelsBySlug.has(model.slug)) {
+        continue;
+      }
+      modelsBySlug.set(model.slug, model);
+    }
+    return [...modelsBySlug.values()];
+  })();
+
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
@@ -43,7 +57,10 @@ export const hydrateCachedProvider = (input: {
     status: input.cachedProvider.status,
     auth: input.cachedProvider.auth,
     checkedAt: input.cachedProvider.checkedAt,
-    quotaSnapshots: input.cachedProvider.quotaSnapshots,
+    ...(input.cachedProvider.quotaSnapshots !== undefined
+      ? { quotaSnapshots: input.cachedProvider.quotaSnapshots }
+      : {}),
+    models: mergedModels,
     slashCommands: input.cachedProvider.slashCommands,
     skills: input.cachedProvider.skills,
   };

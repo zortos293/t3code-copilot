@@ -63,7 +63,7 @@ describe("ChatMarkdown", () => {
     );
 
     try {
-      const link = page.getByRole("link", { name: "PermissionRule.ts:1" });
+      const link = page.getByRole("link", { name: "PermissionRule.ts · L1" });
       await expect.element(link).toBeInTheDocument();
       await expect.element(link).toHaveAttribute("href", `${filePath}#L1`);
 
@@ -71,6 +71,113 @@ describe("ChatMarkdown", () => {
 
       await vi.waitFor(() => {
         expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), `${filePath}:1`);
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("shows column information inline when present", async () => {
+    const filePath =
+      "/Users/yashsingh/p/sco/claude-code-extract/src/utils/permissions/PermissionRule.ts";
+    const screen = await render(
+      <ChatMarkdown text={`[PermissionRule.ts](file://${filePath}#L1C7)`} cwd="/repo/project" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "PermissionRule.ts · L1:C7" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", `${filePath}#L1C7`);
+
+      await link.click();
+
+      await vi.waitFor(() => {
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith(
+          expect.anything(),
+          `${filePath}:1:7`,
+        );
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("disambiguates duplicate file basenames inline", async () => {
+    const firstPath = "/Users/yashsingh/p/t3code/apps/web/src/components/chat/MessagesTimeline.tsx";
+    const secondPath = "/Users/yashsingh/p/t3code/apps/web/src/components/MessagesTimeline.tsx";
+    const screen = await render(
+      <ChatMarkdown
+        text={`See [MessagesTimeline.tsx](file://${firstPath}) and [MessagesTimeline.tsx](file://${secondPath}).`}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await expect
+        .element(page.getByRole("link", { name: "MessagesTimeline.tsx · components/chat" }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByRole("link", { name: "MessagesTimeline.tsx · src/components" }))
+        .toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps normal web links unchanged", async () => {
+    const screen = await render(
+      <ChatMarkdown text="[OpenAI](https://openai.com/docs)" cwd="/repo/project" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "OpenAI" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", "https://openai.com/docs");
+      await expect.element(link).toHaveAttribute("target", "_blank");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders bare file urls as clickable file links", async () => {
+    const filePath =
+      "/Users/yashsingh/p/sco/claude-code-extract/src/utils/permissions/PermissionRule.ts";
+    const screen = await render(
+      <ChatMarkdown text={`Open file://${filePath}#L8 directly`} cwd="/repo/project" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "PermissionRule.ts · L8" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", `${filePath}#L8`);
+
+      await link.click();
+
+      await vi.waitFor(() => {
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), `${filePath}:8`);
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps trailing punctuation outside bare file URL editor targets", async () => {
+    const filePath =
+      "/Users/yashsingh/p/sco/claude-code-extract/src/utils/permissions/PermissionRule.ts";
+    const screen = await render(
+      <ChatMarkdown text={`Open file://${filePath}#L8, then continue`} cwd="/repo/project" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "PermissionRule.ts · L8" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", `${filePath}#L8`);
+      await expect.element(page.getByText(", then continue")).toBeInTheDocument();
+
+      await link.click();
+
+      await vi.waitFor(() => {
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), `${filePath}:8`);
       });
     } finally {
       await screen.unmount();

@@ -11,7 +11,7 @@ import type {
 import { Effect, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { isWindowsCommandNotFound } from "../processRunner";
+import { isWindowsCommandNotFound } from "../processRunner.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 
@@ -98,7 +98,7 @@ export function extractAuthBoolean(value: unknown): boolean | undefined {
 }
 
 export function parseGenericCliVersion(output: string): string | null {
-  const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
+  const match = output.match(/\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/);
   return match?.[1] ?? null;
 }
 
@@ -148,7 +148,7 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
-    ...(input.probe.quotaSnapshots && input.probe.quotaSnapshots.length > 0
+    ...(input.probe.quotaSnapshots !== undefined
       ? { quotaSnapshots: [...input.probe.quotaSnapshots] }
       : {}),
     slashCommands: [...(input.slashCommands ?? [])],

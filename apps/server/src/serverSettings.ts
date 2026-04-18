@@ -13,6 +13,7 @@
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  GIT_TEXT_GENERATION_PROVIDERS,
   type ModelSelection,
   type ProviderKind,
   ServerSettings,
@@ -39,9 +40,10 @@ import {
   Cause,
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
-import { ServerConfig } from "./config";
+import { ServerConfig } from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 export interface ServerSettingsShape {
   /** Start the settings runtime and attach file watching. */
@@ -77,11 +79,25 @@ export class ServerSettingsService extends Context.Service<
         return {
           start: Effect.void,
           ready: Effect.void,
-          getSettings: Ref.get(currentSettingsRef),
+          getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
           updateSettings: (patch) =>
             Ref.get(currentSettingsRef).pipe(
-              Effect.map((currentSettings) => deepMerge(currentSettings, patch)),
+              Effect.flatMap((currentSettings) =>
+                Schema.decodeEffect(ServerSettings)(
+                  applyServerSettingsPatch(currentSettings, patch),
+                ).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ServerSettingsError({
+                        settingsPath: "<memory>",
+                        detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
+                        cause,
+                      }),
+                  ),
+                ),
+              ),
               Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+              Effect.map(resolveTextGenerationProvider),
             ),
           streamChanges: Stream.empty,
         } satisfies ServerSettingsShape;
@@ -101,13 +117,18 @@ const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "copilot", "claudeAgen
  */
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   const selection = settings.textGenerationModelSelection;
-  if (settings.providers[selection.provider].enabled) {
-    return settings;
+  if (selection.provider === "codex" || selection.provider === "claudeAgent") {
+    if (settings.providers[selection.provider].enabled) {
+      return settings;
+    }
   }
 
-  const fallback = PROVIDER_ORDER.find((p) => settings.providers[p].enabled);
+  const fallback = PROVIDER_ORDER.find(
+    (provider): provider is (typeof GIT_TEXT_GENERATION_PROVIDERS)[number] =>
+      (provider === "codex" || provider === "claudeAgent") && settings.providers[provider].enabled,
+  );
   if (!fallback) {
-    // No providers enabled — return as-is; callers will report the error.
+    // No supported providers enabled — return as-is; callers will report the error.
     return settings;
   }
 
@@ -314,7 +335,9 @@ const makeServerSettings = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const next = yield* Schema.decodeEffect(ServerSettings)(deepMerge(current, patch)).pipe(
+          const next = yield* Schema.decodeEffect(ServerSettings)(
+            applyServerSettingsPatch(current, patch),
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new ServerSettingsError({
@@ -324,10 +347,11 @@ const makeServerSettings = Effect.gen(function* () {
                 }),
             ),
           );
+          const resolvedNext = resolveTextGenerationProvider(next);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          return resolveTextGenerationProvider(next);
+          yield* emitChange(resolvedNext);
+          return resolvedNext;
         }),
       ),
     get streamChanges() {

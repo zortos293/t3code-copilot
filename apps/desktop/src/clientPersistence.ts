@@ -6,8 +6,8 @@ import {
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
 import { Predicate } from "effect";
+import * as Schema from "effect/Schema";
 
 interface ClientSettingsDocument {
   readonly settings: ClientSettings;
@@ -88,12 +88,12 @@ function toPersistedSavedEnvironmentRecord(
 }
 
 export function readClientSettings(settingsPath: string): ClientSettings | null {
-  const settings = readJsonFile<ClientSettingsDocument>(settingsPath)?.settings;
-  if (!settings) {
+  const raw = readJsonFile<ClientSettingsDocument>(settingsPath)?.settings;
+  if (!raw) {
     return null;
   }
   try {
-    return Schema.decodeSync(ClientSettingsSchema)(settings);
+    return Schema.decodeUnknownSync(ClientSettingsSchema)(raw);
   } catch {
     return null;
   }

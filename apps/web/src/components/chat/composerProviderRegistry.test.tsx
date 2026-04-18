@@ -26,6 +26,24 @@ const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+const COPILOT_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "claude-sonnet-4",
+    name: "Claude Sonnet 4",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+      ],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    },
+  },
+];
+
 const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-6",
@@ -149,6 +167,28 @@ describe("getComposerProviderState", () => {
       modelOptionsForDispatch: {
         reasoningEffort: "low",
         fastMode: true,
+      },
+    });
+  });
+
+  it("normalizes copilot dispatch options using reasoningEffort", () => {
+    const state = getComposerProviderState({
+      provider: "copilot",
+      model: "claude-sonnet-4",
+      models: COPILOT_MODELS,
+      prompt: "",
+      modelOptions: {
+        copilot: {
+          reasoningEffort: "medium",
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "copilot",
+      promptEffort: "medium",
+      modelOptionsForDispatch: {
+        reasoningEffort: "medium",
       },
     });
   });

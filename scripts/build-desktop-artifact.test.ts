@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Option } from "effect";
 
 import {
+  createBuildConfig,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -41,6 +42,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
     assert.equal(resolveMockUpdateServerUrl(4123), "http://localhost:4123");
   });
+
+  it.effect("keeps electron-builder npm rebuilds enabled for Windows artifacts", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("win", "nsis", "0.0.17", false, false, undefined);
+      assert.equal("npmRebuild" in config, false);
+    }),
+  );
+
+  it.effect("keeps Windows executable resource editing enabled for unsigned artifacts", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("win", "nsis", "0.0.17", false, false, undefined);
+      assert.deepStrictEqual(config.win, {
+        target: ["nsis"],
+        icon: "icon.ico",
+      });
+    }),
+  );
 
   it.effect("normalizes mock update server ports from env-style strings", () =>
     Effect.gen(function* () {

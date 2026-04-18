@@ -1,9 +1,11 @@
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  applyServerSettingsPatch,
   extractPersistedServerObservabilitySettings,
   normalizePersistedServerSettingString,
   parsePersistedServerObservabilitySettings,
-} from "./serverSettings";
+} from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
   it("normalizes optional persisted strings", () => {
@@ -49,5 +51,110 @@ describe("serverSettings helpers", () => {
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
     });
+  });
+
+  it("replaces text generation selection when provider/model are provided", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5.4-mini",
+        options: {
+          reasoningEffort: "high" as const,
+          fastMode: true,
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4-mini",
+        },
+      }).textGenerationModelSelection,
+    ).toEqual({
+      provider: "codex",
+      model: "gpt-5.4-mini",
+    });
+  });
+
+  it("still deep merges text generation selection when only options are provided", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5.4-mini",
+        options: {
+          reasoningEffort: "high" as const,
+          fastMode: true,
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        textGenerationModelSelection: {
+          options: {
+            fastMode: false,
+          },
+        },
+      }).textGenerationModelSelection,
+    ).toEqual({
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      options: {
+        reasoningEffort: "high",
+        fastMode: false,
+      },
+    });
+  });
+
+  it("uses the new provider default git model when switching providers without a model", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5.4-mini",
+        options: {
+          reasoningEffort: "high" as const,
+          fastMode: true,
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        textGenerationModelSelection: {
+          provider: "claudeAgent",
+        },
+      }).textGenerationModelSelection,
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-haiku-4-5",
+    });
+  });
+
+  it("preserves Claude launchArgs when applying a provider settings patch", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        claudeAgent: {
+          ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+          launchArgs: "--dangerously-skip-permissions",
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        providers: {
+          claudeAgent: {
+            launchArgs: "--verbose --dangerously-skip-permissions",
+          },
+        },
+      }).providers.claudeAgent.launchArgs,
+    ).toBe("--verbose --dangerously-skip-permissions");
   });
 });

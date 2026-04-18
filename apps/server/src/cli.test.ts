@@ -37,8 +37,7 @@ import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
-const runCliWithRuntime = (args: ReadonlyArray<string>) =>
-  runCli(args).pipe(Effect.provide(CliRuntimeLayer));
+const runCliWithRuntime = (args: ReadonlyArray<string>) => runCli(args);
 
 const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
@@ -147,7 +146,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     );
   });
 
-it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
+it.layer(CliRuntimeLayer)("cli log-level parsing", (it) => {
   it.effect("accepts the built-in lowercase log-level flag values", () =>
     runCliWithRuntime(["--log-level", "debug", "--version"]),
   );

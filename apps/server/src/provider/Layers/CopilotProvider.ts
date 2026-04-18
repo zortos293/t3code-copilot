@@ -11,11 +11,11 @@ import type {
 } from "@t3tools/contracts";
 import { Effect, Equal, Exit, Layer, Stream } from "effect";
 
-import { ServerSettingsService } from "../../serverSettings";
-import { makeManagedServerProvider } from "../makeManagedServerProvider";
-import { buildServerProvider, providerModelsFromSettings } from "../providerSnapshot";
-import { CopilotProvider } from "../Services/CopilotProvider";
-import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath";
+import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { buildServerProvider, providerModelsFromSettings } from "../providerSnapshot.ts";
+import { CopilotProvider } from "../Services/CopilotProvider.ts";
+import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
 
 const PROVIDER = "copilot" as const;
 
@@ -263,10 +263,9 @@ function resolveRuntimeModels(models: ReadonlyArray<ModelInfo>, settings: Copilo
 }
 
 export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus")(function* () {
-  const settings = yield* Effect.service(ServerSettingsService).pipe(
-    Effect.flatMap((service) => service.getSettings),
-    Effect.map((allSettings) => allSettings.providers.copilot),
-  );
+  const serverSettings = yield* ServerSettingsService;
+  const allSettings = yield* serverSettings.getSettings;
+  const settings = allSettings.providers.copilot;
   const checkedAt = new Date().toISOString();
   const configuredBinaryPath = normalizeCopilotCliPathOverride(settings.binaryPath);
 
@@ -394,10 +393,10 @@ export const CopilotProviderLive = Layer.effect(
   }),
 );
 class CopilotProbeError extends Error {
-  constructor(
-    message: string,
-    readonly causeValue: unknown,
-  ) {
+  constructor(message: string, causeValue: unknown) {
     super(message);
+    this.causeValue = causeValue;
   }
+
+  readonly causeValue: unknown;
 }

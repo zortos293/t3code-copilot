@@ -182,15 +182,34 @@ export function getCustomModelOptionsByProvider(
   };
 }
 
+function resolveAllowedProvider(
+  providers: ReadonlyArray<ServerProvider>,
+  requestedProvider: ProviderKind,
+  allowedProviders?: ReadonlyArray<ProviderKind>,
+): ProviderKind {
+  if (!allowedProviders || allowedProviders.includes(requestedProvider)) {
+    return resolveSelectableProvider(providers, requestedProvider);
+  }
+
+  const firstAllowedEnabled = allowedProviders.find(
+    (provider) => providers.find((candidate) => candidate.provider === provider)?.enabled ?? true,
+  );
+  return resolveSelectableProvider(
+    providers,
+    firstAllowedEnabled ?? allowedProviders[0] ?? requestedProvider,
+  );
+}
+
 export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
+  allowedProviders?: ReadonlyArray<ProviderKind>,
 ): ModelSelection {
   const selection = settings.textGenerationModelSelection ?? {
     provider: "codex" as const,
     model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
   };
-  const provider = resolveSelectableProvider(providers, selection.provider);
+  const provider = resolveAllowedProvider(providers, selection.provider, allowedProviders);
 
   // When the provider changed due to fallback (e.g. selected provider was disabled),
   // don't carry over the old provider's model — use the fallback provider's default.

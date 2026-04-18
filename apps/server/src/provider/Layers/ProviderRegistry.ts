@@ -6,17 +6,17 @@
 import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
 import { Effect, Equal, FileSystem, Layer, Path, PubSub, Ref, Stream } from "effect";
 
-import { ServerConfig } from "../../config";
-import { ClaudeProviderLive } from "./ClaudeProvider";
-import { CopilotProviderLive } from "./CopilotProvider";
-import { CodexProviderLive } from "./CodexProvider";
-import type { ClaudeProviderShape } from "../Services/ClaudeProvider";
-import { ClaudeProvider } from "../Services/ClaudeProvider";
-import type { CopilotProviderShape } from "../Services/CopilotProvider";
-import { CopilotProvider } from "../Services/CopilotProvider";
-import type { CodexProviderShape } from "../Services/CodexProvider";
-import { CodexProvider } from "../Services/CodexProvider";
-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry";
+import { ServerConfig } from "../../config.ts";
+import { ClaudeProviderLive } from "./ClaudeProvider.ts";
+import { CopilotProviderLive } from "./CopilotProvider.ts";
+import { CodexProviderLive } from "./CodexProvider.ts";
+import type { ClaudeProviderShape } from "../Services/ClaudeProvider.ts";
+import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
+import type { CopilotProviderShape } from "../Services/CopilotProvider.ts";
+import { CopilotProvider } from "../Services/CopilotProvider.ts";
+import type { CodexProviderShape } from "../Services/CodexProvider.ts";
+import { CodexProvider } from "../Services/CodexProvider.ts";
+import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   PROVIDER_CACHE_IDS,
@@ -24,13 +24,13 @@ import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
-} from "../providerStatusCache";
+} from "../providerStatusCache.ts";
 
 const loadProviders = (
   codexProvider: CodexProviderShape,
   copilotProvider: CopilotProviderShape,
   claudeProvider: ClaudeProviderShape,
-): Effect.Effect<readonly [ServerProvider, ServerProvider, ServerProvider]> =>
+): Effect.Effect<readonly [ServerProvider, ServerProvider, ServerProvider], never, never> =>
   Effect.all([codexProvider.getSnapshot, copilotProvider.getSnapshot, claudeProvider.getSnapshot], {
     concurrency: "unbounded",
   });

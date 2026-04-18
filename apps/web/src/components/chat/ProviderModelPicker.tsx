@@ -67,11 +67,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
+  allowedProviders?: ReadonlyArray<ProviderKind>;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   onProviderModelChange: (provider: ProviderKind, model: string) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const allowedProviders =
+    props.allowedProviders ?? AVAILABLE_PROVIDER_OPTIONS.map((option) => option.value);
+  const availableProviderOptions = AVAILABLE_PROVIDER_OPTIONS.filter((option) =>
+    allowedProviders.includes(option.value),
+  );
   const activeProvider = props.lockedProvider ?? props.provider;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
   const selectedModelLabel =
@@ -221,7 +227,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           </MenuGroup>
         ) : (
           <>
-            {AVAILABLE_PROVIDER_OPTIONS.map((option) => {
+            {availableProviderOptions.map((option) => {
               const OptionIcon = PROVIDER_ICON_BY_PROVIDER[option.value];
               const liveProvider = props.providers
                 ? getProviderSnapshot(props.providers, option.value)

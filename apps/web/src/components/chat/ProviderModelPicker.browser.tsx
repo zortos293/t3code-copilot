@@ -24,6 +24,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: new Date().toISOString(),
+    quotaSnapshots: [],
     slashCommands: [],
     skills: [],
     models: [
@@ -61,6 +62,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: new Date().toISOString(),
+    quotaSnapshots: [],
     slashCommands: [],
     skills: [],
     models: [
@@ -124,6 +126,7 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
     auth: { status: "authenticated" },
     checkedAt: new Date().toISOString(),
     models,
+    quotaSnapshots: [],
     slashCommands: [],
     skills: [],
   };

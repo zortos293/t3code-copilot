@@ -19,7 +19,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { ensureLocalApi } from "~/localApi";
 import { Struct } from "effect";
-import { deepMerge } from "@t3tools/shared/Struct";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -37,6 +37,14 @@ function emitClientSettingsChange() {
 
 function getClientSettingsSnapshot(): ClientSettings {
   return clientSettingsSnapshot;
+}
+
+export function getUnifiedSettingsSnapshot(): UnifiedSettings {
+  return {
+    ...DEFAULT_UNIFIED_SETTINGS,
+    ...getServerConfig()?.settings,
+    ...getClientSettingsSnapshot(),
+  };
 }
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
@@ -64,7 +72,7 @@ async function hydrateClientSettings(): Promise<void> {
     try {
       const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
       if (persistedSettings) {
-        replaceClientSettingsSnapshot(persistedSettings);
+        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
@@ -154,7 +162,7 @@ export function useUpdateSettings() {
     if (Object.keys(serverPatch).length > 0) {
       const currentServerConfig = getServerConfig();
       if (currentServerConfig) {
-        applySettingsUpdated(deepMerge(currentServerConfig.settings, serverPatch));
+        applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
       }
       // Fire-and-forget RPC — push will reconcile on success
       void ensureLocalApi().server.updateSettings(serverPatch);

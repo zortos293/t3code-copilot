@@ -4,9 +4,12 @@ import { assertFailure } from "@effect/vitest/utils";
 
 import { Effect, Layer, Stream } from "effect";
 
-import { ClaudeAdapter, ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { CopilotAdapter, CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
-import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
+import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
+import type { CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
+import { CodexAdapter } from "../Services/CodexAdapter.ts";
+import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import { ProviderUnsupportedError } from "../Errors.ts";

@@ -2,12 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   extractPathFromShellOutput,
+  isCommandAvailable,
   listLoginShellCandidates,
   mergePathEntries,
+  mergePathValues,
   readEnvironmentFromLoginShell,
+  readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
   readPathFromLoginShell,
-} from "./shell";
+  resolveKnownWindowsCliDirs,
+  resolveWindowsEnvironment,
+} from "./shell.ts";
 
 describe("extractPathFromShellOutput", () => {
   it("extracts the path between capture markers", () => {
@@ -186,5 +191,384 @@ describe("mergePathEntries", () => {
     expect(mergePathEntries("C:\\Tools;C:\\Windows", "C:\\Windows;C:\\Git", "win32")).toBe(
       "C:\\Tools;C:\\Windows;C:\\Git",
     );
+  });
+});
+
+describe("readEnvironmentFromWindowsShell", () => {
+  it("extracts environment variables from a PowerShell command", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(
+      () =>
+        "__T3CODE_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__T3CODE_ENV_PATH_END__\n",
+    );
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
+      PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+    });
+    expect(execFile).toHaveBeenCalledWith(
+      "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
+      { encoding: "utf8", timeout: 5000 },
+    );
+  });
+
+  it("merges machine, user, and inherited PATH entries when probing PATH", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(
+      () =>
+        "__T3CODE_ENV_PATH_START__\nC:\\Machine\\Node;C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Windows\\System32\n__T3CODE_ENV_PATH_END__\n",
+    );
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
+      PATH: "C:\\Machine\\Node;C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Windows\\System32",
+    });
+
+    const firstCall = execFile.mock.calls[0];
+    expect(firstCall?.[1]?.at(-1)).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH', 'User')",
+    );
+    expect(firstCall?.[1]?.at(-1)).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH', 'Machine')",
+    );
+    expect(firstCall?.[1]?.at(-1)).toContain("$env:PATH");
+  });
+
+  it("strips CRLF delimiters from captured PowerShell values", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(
+      () =>
+        "__T3CODE_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__T3CODE_ENV_FNM_DIR_END__\r\n",
+    );
+
+    expect(readEnvironmentFromWindowsShell(["FNM_DIR"], execFile)).toEqual({
+      FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+    });
+  });
+
+  it("omits -NoProfile when loadProfile is enabled", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
+      PATH: "C:\\Tools",
+    });
+    expect(execFile).toHaveBeenCalledWith(
+      "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
+      { encoding: "utf8", timeout: 5000 },
+    );
+    expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
+  });
+
+  it("falls back to PATH-based shells when bootstrap PowerShell paths are unavailable", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >((file) => {
+      if (file !== "pwsh.exe") {
+        throw new Error(`spawn ${file} ENOENT`);
+      }
+      return "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n";
+    });
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
+      PATH: "C:\\Tools",
+    });
+    expect(execFile).toHaveBeenNthCalledWith(
+      1,
+      "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      expect.any(Array),
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe",
+      expect.any(Array),
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      3,
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      expect.any(Array),
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(execFile).toHaveBeenNthCalledWith(4, "pwsh.exe", expect.any(Array), {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  });
+
+  it("uses absolute Windows PowerShell paths before PATH lookups", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >((file) => {
+      if (file === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe") {
+        return "__T3CODE_ENV_PATH_START__\nC:\\Profile\\Node\n__T3CODE_ENV_PATH_END__\n";
+      }
+      throw new Error(`spawn ${file} ENOENT`);
+    });
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
+      PATH: "C:\\Profile\\Node",
+    });
+    expect(execFile).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("mergePathValues", () => {
+  it("dedupes case-insensitively on Windows while preserving preferred order", () => {
+    expect(
+      mergePathValues(
+        'C:\\Users\\testuser\\AppData\\Roaming\\npm;"C:\\Program Files\\nodejs"',
+        "c:\\users\\testuser\\appdata\\roaming\\npm;C:\\Windows\\System32",
+        "win32",
+      ),
+    ).toBe(
+      'C:\\Users\\testuser\\AppData\\Roaming\\npm;"C:\\Program Files\\nodejs";C:\\Windows\\System32',
+    );
+  });
+
+  it("dedupes case-sensitively on POSIX", () => {
+    expect(mergePathValues("/usr/local/bin:/usr/bin", "/usr/bin:/USR/BIN", "linux")).toBe(
+      "/usr/local/bin:/usr/bin:/USR/BIN",
+    );
+  });
+});
+
+describe("resolveKnownWindowsCliDirs", () => {
+  it("returns known Windows CLI install directories in priority order", () => {
+    expect(
+      resolveKnownWindowsCliDirs({
+        APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+        USERPROFILE: "C:\\Users\\testuser",
+      }),
+    ).toEqual([
+      "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+      "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+      "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+      "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+      "C:\\Users\\testuser\\.bun\\bin",
+      "C:\\Users\\testuser\\scoop\\shims",
+    ]);
+  });
+});
+
+describe("isCommandAvailable", () => {
+  it("returns false when PATH is empty", () => {
+    expect(
+      isCommandAvailable("definitely-not-installed", {
+        platform: "win32",
+        env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveWindowsEnvironment", () => {
+  it("returns the baseline no-profile PATH patch when node is already available", () => {
+    const readEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+        options?.loadProfile
+          ? { PATH: "C:\\Profile\\Bin" }
+          : { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" },
+    );
+    const commandAvailable = vi.fn(() => true);
+
+    expect(
+      resolveWindowsEnvironment(
+        {
+          PATH: "C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+          USERPROFILE: "C:\\Users\\testuser",
+        },
+        {
+          readEnvironment,
+          commandAvailable,
+        },
+      ),
+    ).toEqual({
+      PATH: [
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Shell\\Bin",
+        "C:\\Windows\\System32",
+      ].join(";"),
+    });
+    expect(readEnvironment).toHaveBeenCalledTimes(1);
+    expect(readEnvironment).toHaveBeenCalledWith(["PATH"], { loadProfile: false });
+    expect(commandAvailable).toHaveBeenCalledWith(
+      "node",
+      expect.objectContaining({
+        platform: "win32",
+      }),
+    );
+  });
+
+  it("recovers node from registry-backed PATH entries before loading the profile", () => {
+    const readEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+        options?.loadProfile
+          ? { PATH: "C:\\Profile\\Node;C:\\Windows\\System32" }
+          : { PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm;C:\\Machine\\Node" },
+    );
+    const commandAvailable = vi.fn((command: string, probe) => {
+      if (command !== "node") {
+        return false;
+      }
+
+      return (
+        probe?.platform === "win32" &&
+        typeof probe.env?.PATH === "string" &&
+        probe.env.PATH.includes("C:\\Machine\\Node")
+      );
+    });
+
+    expect(
+      resolveWindowsEnvironment(
+        {
+          PATH: "C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+          USERPROFILE: "C:\\Users\\testuser",
+        },
+        {
+          readEnvironment,
+          commandAvailable,
+        },
+      ),
+    ).toEqual({
+      PATH: [
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Machine\\Node",
+        "C:\\Windows\\System32",
+      ].join(";"),
+    });
+    expect(readEnvironment).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads the PowerShell profile when baseline env cannot resolve node", () => {
+    const readEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+        options?.loadProfile
+          ? {
+              PATH: "C:\\Profile\\Node;C:\\Windows\\System32",
+              FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+              FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
+            }
+          : { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" },
+    );
+    const commandAvailable = vi.fn(() => false);
+
+    expect(
+      resolveWindowsEnvironment(
+        {
+          PATH: "C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+          LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+          USERPROFILE: "C:\\Users\\testuser",
+        },
+        {
+          readEnvironment,
+          commandAvailable,
+        },
+      ),
+    ).toEqual({
+      PATH: [
+        "C:\\Profile\\Node",
+        "C:\\Windows\\System32",
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
+        "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
+        "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Shell\\Bin",
+      ].join(";"),
+      FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+      FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
+    });
+    expect(readEnvironment).toHaveBeenNthCalledWith(1, ["PATH"], { loadProfile: false });
+    expect(readEnvironment).toHaveBeenNthCalledWith(2, ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"], {
+      loadProfile: true,
+    });
+    expect(commandAvailable).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the baseline env when profiled probe still does not resolve node", () => {
+    const readEnvironment = vi.fn(
+      (_names: ReadonlyArray<string>, options?: { loadProfile?: boolean }) =>
+        options?.loadProfile ? { FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm" } : {},
+    );
+    const commandAvailable = vi.fn(() => false);
+
+    expect(
+      resolveWindowsEnvironment(
+        {
+          PATH: "C:\\Windows\\System32",
+          APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+          USERPROFILE: "C:\\Users\\testuser",
+        },
+        {
+          readEnvironment,
+          commandAvailable,
+        },
+      ),
+    ).toEqual({
+      PATH: [
+        "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\.bun\\bin",
+        "C:\\Users\\testuser\\scoop\\shims",
+        "C:\\Windows\\System32",
+      ].join(";"),
+      FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+    });
+    expect(commandAvailable).toHaveBeenCalledTimes(1);
   });
 });

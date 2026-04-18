@@ -1,12 +1,19 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
-import type { ProviderKind } from "./orchestration";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import type { ProviderKind } from "./orchestration.ts";
 
 export const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORT_OPTIONS)[number];
-export const CLAUDE_CODE_EFFORT_OPTIONS = ["low", "medium", "high", "max", "ultrathink"] as const;
-export type ClaudeCodeEffort = (typeof CLAUDE_CODE_EFFORT_OPTIONS)[number];
-export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeCodeEffort;
+export const CLAUDE_AGENT_EFFORT_OPTIONS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultrathink",
+] as const;
+export type ClaudeAgentEffort = (typeof CLAUDE_AGENT_EFFORT_OPTIONS)[number];
+export type ProviderReasoningEffort = CodexReasoningEffort | ClaudeAgentEffort;
 
 export const CodexModelOptions = Schema.Struct({
   reasoningEffort: Schema.optional(Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS)),
@@ -21,7 +28,7 @@ export type CopilotModelOptions = typeof CopilotModelOptions.Type;
 
 export const ClaudeModelOptions = Schema.Struct({
   thinking: Schema.optional(Schema.Boolean),
-  effort: Schema.optional(Schema.Literals(CLAUDE_CODE_EFFORT_OPTIONS)),
+  effort: Schema.optional(Schema.Literals(CLAUDE_AGENT_EFFORT_OPTIONS)),
   fastMode: Schema.optional(Schema.Boolean),
   contextWindow: Schema.optional(Schema.String),
 });
@@ -65,12 +72,16 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
 
 export const DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 
-/** Per-provider text generation model defaults. */
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
   codex: "gpt-5.4-mini",
   copilot: "gpt-5-mini",
   claudeAgent: "claude-haiku-4-5",
 };
+
+export const GIT_TEXT_GENERATION_PROVIDERS = [
+  "codex",
+  "claudeAgent",
+] as const satisfies ReadonlyArray<ProviderKind>;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   codex: {
@@ -105,7 +116,9 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     raptor: "raptor-mini",
   },
   claudeAgent: {
-    opus: "claude-opus-4-6",
+    opus: "claude-opus-4-7",
+    "opus-4.7": "claude-opus-4-7",
+    "claude-opus-4.7": "claude-opus-4-7",
     "opus-4.6": "claude-opus-4-6",
     "claude-opus-4.6": "claude-opus-4-6",
     "claude-opus-4-6-20251117": "claude-opus-4-6",
@@ -119,8 +132,6 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "claude-haiku-4-5-20251001": "claude-haiku-4-5",
   },
 };
-
-// ── Provider display names ────────────────────────────────────────────
 
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderKind, string> = {
   codex: "Codex",

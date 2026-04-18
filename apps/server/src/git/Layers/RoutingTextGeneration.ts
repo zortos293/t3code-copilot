@@ -4,7 +4,8 @@
  * request input.
  *
  * When `modelSelection.provider` is `"claudeAgent"` the request is forwarded to
- * the Claude layer; Copilot and Codex both use the Codex text-generation path.
+ * the Claude layer; unsupported or absent providers fall back to the Codex
+ * implementation as a defensive last resort.
  *
  * @module RoutingTextGeneration
  */
@@ -12,6 +13,7 @@ import { Effect, Layer, Context } from "effect";
 
 import {
   TextGeneration,
+  isTextGenerationProvider,
   type TextGenerationProvider,
   type TextGenerationShape,
 } from "../Services/TextGeneration.ts";
@@ -38,15 +40,25 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
   const codex = yield* CodexTextGen;
   const claude = yield* ClaudeTextGen;
 
-  const route = (provider?: TextGenerationProvider): TextGenerationShape =>
-    provider === "claudeAgent" ? claude : codex;
+  const route = (provider?: TextGenerationProvider): TextGenerationShape => {
+    if (provider === "claudeAgent") {
+      return claude;
+    }
+    return codex;
+  };
+
+  const resolveProvider = (provider: string | undefined): TextGenerationProvider =>
+    isTextGenerationProvider(provider as never) ? (provider as TextGenerationProvider) : "codex";
 
   return {
     generateCommitMessage: (input) =>
-      route(input.modelSelection.provider).generateCommitMessage(input),
-    generatePrContent: (input) => route(input.modelSelection.provider).generatePrContent(input),
-    generateBranchName: (input) => route(input.modelSelection.provider).generateBranchName(input),
-    generateThreadTitle: (input) => route(input.modelSelection.provider).generateThreadTitle(input),
+      route(resolveProvider(input.modelSelection.provider)).generateCommitMessage(input),
+    generatePrContent: (input) =>
+      route(resolveProvider(input.modelSelection.provider)).generatePrContent(input),
+    generateBranchName: (input) =>
+      route(resolveProvider(input.modelSelection.provider)).generateBranchName(input),
+    generateThreadTitle: (input) =>
+      route(resolveProvider(input.modelSelection.provider)).generateThreadTitle(input),
   } satisfies TextGenerationShape;
 });
 

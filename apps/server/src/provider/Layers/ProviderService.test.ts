@@ -24,6 +24,7 @@ import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effec
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  ProviderAdapterValidationError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
   ProviderValidationError,
@@ -651,6 +652,251 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.cwd, "/tmp/project-claude");
       }
+    }),
+  );
+
+  it.effect("stops stale sessions in other providers after a successful replacement start", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-replacement");
+
+      const codexSession = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-replacement",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.stopSession.mockClear();
+      routing.claude.stopSession.mockClear();
+
+      const claudeSession = yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        cwd: "/tmp/project-provider-replacement",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(codexSession.provider, "codex");
+      assert.equal(claudeSession.provider, "claudeAgent");
+      assert.deepEqual(routing.codex.stopSession.mock.calls, [[threadId]]);
+      assert.equal(routing.claude.stopSession.mock.calls.length, 0);
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "claudeAgent");
+      assert.deepEqual(binding?.resumeCursor, claudeSession.resumeCursor);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider),
+        ["claudeAgent"],
+      );
+    }),
+  );
+
+  it.effect("persists the replacement binding before stopping stale providers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-binding-order");
+
+      yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-binding-order",
+        runtimeMode: "full-access",
+      });
+
+      const bindingDuringStopRef = { current: null as null | unknown };
+      const originalStopSession = routing.codex.stopSession.getMockImplementation();
+      routing.codex.stopSession.mockImplementation((stoppedThreadId: ThreadId) =>
+        Effect.gen(function* () {
+          bindingDuringStopRef.current = Option.getOrUndefined(
+            yield* Effect.orDie(directory.getBinding(stoppedThreadId)),
+          );
+          if (!originalStopSession) {
+            return;
+          }
+          return yield* originalStopSession(stoppedThreadId);
+        }),
+      );
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        cwd: "/tmp/project-provider-binding-order",
+        runtimeMode: "full-access",
+      });
+
+      const bindingDuringStop = bindingDuringStopRef.current as {
+        provider?: string;
+        resumeCursor?: unknown;
+      } | null;
+      assert.equal(bindingDuringStop?.provider, "claudeAgent");
+      assert.deepEqual(bindingDuringStop?.resumeCursor, replacement.resumeCursor);
+
+      routing.codex.stopSession.mockImplementation(originalStopSession ?? (() => Effect.void));
+    }),
+  );
+
+  it.effect("rolls back replacement startup when stopping a stale provider fails", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-stop-failure");
+
+      const initial = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-stop-failure",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: "codex",
+            operation: "ProviderService.test",
+            issue: "simulated stale stop failure",
+          }),
+        ),
+      );
+
+      const failure = yield* Effect.flip(
+        provider.startSession(threadId, {
+          provider: "claudeAgent",
+          threadId,
+          cwd: "/tmp/project-provider-stop-failure",
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "Failed to stop stale provider session");
+      assert.equal(routing.claude.stopSession.mock.calls.length, 1);
+      assert.deepEqual(routing.claude.stopSession.mock.calls[0], [threadId]);
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "codex");
+      assert.deepEqual(binding?.resumeCursor, initial.resumeCursor);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider)
+          .toSorted(),
+        ["codex"],
+      );
+    }),
+  );
+
+  it.effect("keeps the replacement binding when replacement shutdown fails during rollback", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-replacement-stop-failure");
+
+      const initial = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-replacement-stop-failure",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: "codex",
+            operation: "ProviderService.test",
+            issue: "simulated stale stop failure",
+          }),
+        ),
+      );
+      routing.claude.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "ProviderService.test",
+            issue: "simulated replacement stop failure",
+          }),
+        ),
+      );
+
+      const failure = yield* Effect.flip(
+        provider.startSession(threadId, {
+          provider: "claudeAgent",
+          threadId,
+          cwd: "/tmp/project-provider-replacement-stop-failure",
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "Failed to stop stale provider session");
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "claudeAgent");
+      assert.equal(routing.claude.stopSession.mock.calls.length >= 1, true);
+      assert.deepEqual(routing.claude.stopSession.mock.calls.at(-1), [threadId]);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider)
+          .toSorted(),
+        ["claudeAgent", "codex"],
+      );
+    }),
+  );
+
+  it.effect("does not let stale shutdown remove the active replacement binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-stale-delete-guard");
+
+      yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        cwd: "/tmp/project-provider-stale-delete-guard",
+        runtimeMode: "full-access",
+      });
+
+      const originalClaudeStopSession = routing.claude.stopSession.getMockImplementation();
+      routing.claude.stopSession.mockImplementationOnce((stoppedThreadId: ThreadId) =>
+        Effect.gen(function* () {
+          const bindingBeforeDelete = Option.getOrUndefined(
+            yield* Effect.orDie(directory.getBinding(stoppedThreadId)),
+          );
+          assert.equal(bindingBeforeDelete?.provider, "codex");
+          if (!originalClaudeStopSession) {
+            return;
+          }
+          return yield* originalClaudeStopSession(stoppedThreadId);
+        }),
+      );
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-stale-delete-guard",
+        runtimeMode: "full-access",
+      });
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "codex");
+      assert.deepEqual(binding?.resumeCursor, replacement.resumeCursor);
+
+      const sessions = yield* provider.listSessions();
+      assert.deepEqual(
+        sessions
+          .filter((session) => session.threadId === threadId)
+          .map((session) => session.provider),
+        ["codex"],
+      );
     }),
   );
 

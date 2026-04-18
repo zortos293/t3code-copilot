@@ -1,4 +1,4 @@
-import type {
+import {
   EnvironmentId,
   MessageId,
   OrchestrationCheckpointSummary,
@@ -15,13 +15,13 @@ import type {
   OrchestrationThreadShell,
   OrchestrationThreadActivity,
   ProjectId,
+  ProviderKind,
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { ProviderKind } from "@t3tools/contracts";
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
@@ -131,7 +131,7 @@ function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
 }
 
 function normalizeModelSelection<
-  T extends { provider: "codex" | "copilot" | "claudeAgent"; model: string },
+  T extends { provider: ProviderKind; model: string } & Record<string, unknown>,
 >(selection: T): T {
   return {
     ...selection,
@@ -1003,7 +1003,7 @@ function toLegacySessionStatus(
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
   if (Schema.is(ProviderKind)(providerName)) {
-    return providerName;
+    return providerName as ProviderKind;
   }
   return "codex";
 }

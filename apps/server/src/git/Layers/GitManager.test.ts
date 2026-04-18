@@ -630,6 +630,7 @@ function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunnerShape;
+  serverSettingsOverrides?: Parameters<typeof ServerSettingsService.layerTest>[0];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -637,7 +638,7 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const serverSettingsLayer = ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettingsService.layerTest(input?.serverSettingsOverrides);
 
   const gitCoreLayer = GitCoreLive.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -1292,6 +1293,93 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ),
       ).toBe("Implement stacked git actions");
     }),
+  );
+
+  it.effect(
+    "falls back from copilot git text generation settings before generating commit text",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        fs.writeFileSync(path.join(repoDir, "copilot-fallback.txt"), "fallback\n");
+        yield* runGit(repoDir, ["add", "copilot-fallback.txt"]);
+
+        let seenModelSelection: ModelSelection | null = null;
+        const { manager } = yield* makeManager({
+          serverSettingsOverrides: {
+            textGenerationModelSelection: {
+              provider: "copilot",
+              model: "gpt-5-mini",
+            },
+          },
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.sync(() => {
+                seenModelSelection = input.modelSelection;
+                return { subject: "Fallback commit", body: "" };
+              }),
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+        });
+
+        expect(result.commit.status).toBe("created");
+        expect(seenModelSelection).toEqual({
+          provider: "codex",
+          model: "gpt-5.4-mini",
+        });
+      }),
+  );
+
+  it.effect(
+    "falls back from copilot git text generation settings before generating PR content",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/copilot-pr-fallback"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        fs.writeFileSync(path.join(repoDir, "pr-fallback.txt"), "fallback\n");
+        yield* runGit(repoDir, ["add", "pr-fallback.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Prepare PR fallback"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/copilot-pr-fallback"]);
+
+        let seenModelSelection: ModelSelection | null = null;
+        const { manager } = yield* makeManager({
+          serverSettingsOverrides: {
+            textGenerationModelSelection: {
+              provider: "copilot",
+              model: "gpt-5-mini",
+            },
+          },
+          textGeneration: {
+            generatePrContent: (input) =>
+              Effect.sync(() => {
+                seenModelSelection = input.modelSelection;
+                return { title: "Fallback PR", body: "Generated" };
+              }),
+          },
+          ghScenario: {
+            prListSequence: [JSON.stringify([]), JSON.stringify([])],
+            createdPrUrl: "https://github.com/pingdotgg/codething-mvp/pull/999",
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
+
+        expect(result.pr.status).toBe("created");
+        expect(seenModelSelection).toEqual({
+          provider: "codex",
+          model: "gpt-5.4-mini",
+        });
+      }),
   );
 
   it.effect("uses custom commit message when provided", () =>

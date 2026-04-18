@@ -2,8 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DEFAULT_SERVER_SETTINGS, ServerSettingsPatch } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Schema } from "effect";
-import { ServerConfig } from "./config";
-import { ServerSettingsLive, ServerSettingsService } from "./serverSettings";
+import { ServerConfig } from "./config.ts";
+import { ServerSettingsLive, ServerSettingsService } from "./serverSettings.ts";
 
 const makeServerSettingsLayer = () =>
   ServerSettingsLive.pipe(
@@ -37,6 +37,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           textGenerationModelSelection: {
             options: {
               fastMode: false,
+            },
+          },
+        },
+      );
+
+      assert.deepEqual(
+        decodePatch({
+          providers: {
+            claudeAgent: {
+              launchArgs: "--verbose --dangerously-skip-permissions",
+            },
+          },
+        }),
+        {
+          providers: {
+            claudeAgent: {
+              launchArgs: "--verbose --dangerously-skip-permissions",
             },
           },
         },
@@ -92,6 +109,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         enabled: true,
         binaryPath: "/usr/local/bin/claude",
         customModels: ["claude-custom"],
+        launchArgs: "",
       });
       assert.deepEqual(next.textGenerationModelSelection, {
         provider: "codex",
@@ -141,6 +159,90 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("drops stale text generation options when resetting model selection", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      yield* serverSettings.updateSettings({
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+          options: {
+            reasoningEffort: "high",
+            fastMode: true,
+          },
+        },
+      });
+
+      const next = yield* serverSettings.updateSettings({
+        textGenerationModelSelection: {
+          provider: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.provider,
+          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        provider: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.provider,
+        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("falls back from unsupported copilot git text generation selections", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      const next = yield* serverSettings.updateSettings({
+        textGenerationModelSelection: {
+          provider: "copilot",
+          model: "gpt-5-mini",
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        provider: "codex",
+        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists a disabled selected provider while read-time access still falls back", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: {
+            enabled: false,
+          },
+        },
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        provider: "claudeAgent",
+        model: "claude-haiku-4-5",
+      });
+
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(persisted.textGenerationModelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+      });
+
+      const readBack = yield* serverSettings.getSettings;
+      assert.deepEqual(readBack.textGenerationModelSelection, {
+        provider: "claudeAgent",
+        model: "claude-haiku-4-5",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("trims provider path settings when updates are applied", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
@@ -167,6 +269,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         enabled: true,
         binaryPath: "/opt/homebrew/bin/claude",
         customModels: [],
+        launchArgs: "",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
