@@ -331,7 +331,9 @@ describe("uiStateStore pure functions", () => {
 
     vi.resetModules();
     const firstModule = await import("./uiStateStore");
-    firstModule.useUiStateStore.getState().syncProjects([{ key: "project-1", cwd: "/tmp/project-1" }]);
+    firstModule.useUiStateStore
+      .getState()
+      .syncProjects([{ key: "project-1", cwd: "/tmp/project-1" }]);
     firstModule.useUiStateStore.getState().setProjectExpanded("project-1", false);
     vi.advanceTimersByTime(600);
 

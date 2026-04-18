@@ -96,11 +96,11 @@ export function normalizeCopilotModelOptionsWithCapabilities(
   modelOptions: CopilotModelOptions | null | undefined,
 ): CopilotModelOptions | undefined {
   const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
-  const nextOptions: CopilotModelOptions = {
-    ...(reasoningEffort
-      ? { reasoningEffort: reasoningEffort as CopilotModelOptions["reasoningEffort"] }
-      : {}),
-  };
+  const nextOptions: CopilotModelOptions = reasoningEffort
+    ? {
+        reasoningEffort: reasoningEffort as CopilotModelOptions["reasoningEffort"],
+      }
+    : {};
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
@@ -259,6 +259,22 @@ export function resolveModelSlugForProvider(
   model: string | null | undefined,
 ): string {
   return resolveModelSlug(model, provider);
+}
+
+export function resolveApiModelId(modelSelection: ModelSelection): string {
+  switch (modelSelection.provider) {
+    case "claudeAgent": {
+      switch (modelSelection.options?.contextWindow) {
+        case "1m":
+          return `${modelSelection.model}[1m]`;
+        default:
+          return modelSelection.model;
+      }
+    }
+    default: {
+      return modelSelection.model;
+    }
+  }
 }
 
 /** Trim a string, returning null for empty/missing values. */

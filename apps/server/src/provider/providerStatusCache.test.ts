@@ -73,7 +73,6 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
-
   it.effect("ignores stale writes when a newer provider snapshot is already cached", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -149,10 +149,10 @@ export const writeProviderStatusCache = (input: {
 
       yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
       yield* fs.writeFileString(tempPath, encoded);
-      yield* fs.rename(tempPath, input.filePath).pipe(
-        Effect.ensuring(
-          fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true })),
-        ),
-      );
+      yield* fs
+        .rename(tempPath, input.filePath)
+        .pipe(
+          Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }))),
+        );
     }),
   );

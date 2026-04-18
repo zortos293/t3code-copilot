@@ -161,9 +161,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
-        canonicalEventLogger
-          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
-          : Effect.void,
+        canonicalEventLogger ? canonicalEventLogger.write(canonicalEvent, null) : Effect.void,
       ),
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
@@ -299,38 +297,66 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return { adapter: recovered.adapter, threadId: input.threadId, isActive: true } as const;
   });
 
+  const restorePersistedBinding = (
+    threadId: ThreadId,
+    binding: ProviderRuntimeBinding | undefined,
+  ) =>
+    binding
+      ? directory.upsert({
+          threadId: binding.threadId,
+          provider: binding.provider,
+          ...(binding.adapterKey !== undefined ? { adapterKey: binding.adapterKey } : {}),
+          ...(binding.runtimeMode !== undefined ? { runtimeMode: binding.runtimeMode } : {}),
+          ...(binding.status !== undefined ? { status: binding.status } : {}),
+          ...(binding.resumeCursor !== undefined ? { resumeCursor: binding.resumeCursor } : {}),
+          ...(binding.runtimePayload !== undefined
+            ? { runtimePayload: binding.runtimePayload }
+            : {}),
+        })
+      : directory.remove(threadId);
+
   const stopStaleSessionsForThread = Effect.fn("stopStaleSessionsForThread")(function* (input: {
     readonly threadId: ThreadId;
     readonly currentProvider: ProviderSession["provider"];
   }) {
-    yield* Effect.forEach(
-      adapters,
-      (adapter) =>
-        adapter.provider === input.currentProvider
-          ? Effect.void
-          : Effect.gen(function* () {
-              const hasSession = yield* adapter.hasSession(input.threadId);
-              if (!hasSession) {
-                return;
-              }
+    const failures = yield* Effect.forEach(adapters, (adapter) =>
+      adapter.provider === input.currentProvider
+        ? Effect.succeed<readonly [ProviderSession["provider"], unknown] | null>(null)
+        : Effect.gen(function* () {
+            const hasSession = yield* adapter.hasSession(input.threadId);
+            if (!hasSession) {
+              return null;
+            }
 
-              yield* adapter.stopSession(input.threadId).pipe(
-                Effect.tap(() =>
-                  analytics.record("provider.session.stopped", {
-                    provider: adapter.provider,
-                  }),
-                ),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("provider.session.stop-stale-failed", {
-                    threadId: input.threadId,
-                    provider: adapter.provider,
-                    cause,
-                  }),
-                ),
-              );
-            }),
-      { discard: true },
+            return yield* adapter.stopSession(input.threadId).pipe(
+              Effect.tap(() =>
+                analytics.record("provider.session.stopped", {
+                  provider: adapter.provider,
+                }),
+              ),
+              Effect.as(null),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("provider.session.stop-stale-failed", {
+                  threadId: input.threadId,
+                  provider: adapter.provider,
+                  cause,
+                }).pipe(Effect.as([adapter.provider, cause] as const)),
+              ),
+            );
+          }),
     );
+
+    const failure = failures.find((result) => result !== null);
+    if (failure) {
+      const [provider, cause] = failure;
+      return yield* Effect.fail(
+        new ProviderValidationError({
+          operation: "ProviderService.startSession",
+          issue: `Failed to stop stale provider session for '${provider}'.`,
+          cause,
+        }),
+      );
+    }
   });
 
   const startSession: ProviderServiceShape["startSession"] = Effect.fn("startSession")(
@@ -387,13 +413,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
 
-        yield* stopStaleSessionsForThread({
-          threadId,
-          currentProvider: adapter.provider,
-        });
         yield* upsertSessionBinding(session, threadId, {
           modelSelection: input.modelSelection,
         });
+        yield* stopStaleSessionsForThread({
+          threadId,
+          currentProvider: adapter.provider,
+        }).pipe(
+          Effect.catch((error) =>
+            adapter.stopSession(threadId).pipe(
+              Effect.matchCauseEffect({
+                onFailure: (cause) =>
+                  Effect.logWarning("provider.session.stop-replacement-failed", {
+                    threadId,
+                    provider: adapter.provider,
+                    cause,
+                  }).pipe(Effect.andThen(Effect.fail(error))),
+                onSuccess: () =>
+                  restorePersistedBinding(threadId, persistedBinding).pipe(
+                    Effect.andThen(Effect.fail(error)),
+                  ),
+              }),
+            ),
+          ),
+        );
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
           runtimeMode: input.runtimeMode,
@@ -622,14 +665,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
-        yield* directory.upsert({
-          threadId: input.threadId,
-          provider: routed.adapter.provider,
-          status: "stopped",
-          runtimePayload: {
-            activeTurnId: null,
-          },
-        });
+        yield* directory.remove(input.threadId);
         yield* analytics.record("provider.session.stopped", {
           provider: routed.adapter.provider,
         });

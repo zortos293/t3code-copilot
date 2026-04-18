@@ -151,7 +151,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
 
-    return {
+    const item: CommandPaletteActionItem = {
       kind: "action",
       value: `thread:${thread.id}`,
       searchTerms: [thread.title, projectTitle ?? "", thread.branch ?? ""],
@@ -161,12 +161,15 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
       ),
       icon: input.icon,
-      ...(leadingContent ? { titleLeadingContent: leadingContent } : {}),
-      ...(trailingContent ? { titleTrailingContent: trailingContent } : {}),
       run: async () => {
         await input.runThread(thread);
       },
     };
+    return Object.assign(
+      item,
+      leadingContent ? { titleLeadingContent: leadingContent } : null,
+      trailingContent ? { titleTrailingContent: trailingContent } : null,
+    );
   });
 }
 

@@ -372,6 +372,7 @@ describe("thread selection memoization", () => {
         model: "claude-sonnet-4-6",
         options: { effort: "max", fastMode: true },
       },
+      updatedAt: "2026-02-13T00:00:00.000Z",
     });
     const ref = scopeThreadRef(thread.environmentId, thread.id);
     const firstState = makeState(thread);
@@ -385,7 +386,7 @@ describe("thread selection memoization", () => {
           model: "claude-sonnet-4-6",
           options: { effort: "max", fastMode: true },
         },
-        updatedAt: thread.updatedAt,
+        updatedAt: thread.updatedAt ?? thread.createdAt,
       }),
       thread.environmentId,
     );

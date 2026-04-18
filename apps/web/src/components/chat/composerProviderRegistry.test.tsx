@@ -468,6 +468,142 @@ describe("getComposerProviderState", () => {
       },
     });
   });
+
+  it("preserves explicit fastMode: false so deepMerge can overwrite a prior true", () => {
+    // Regression: normalizeClaudeModelOptionsWithCapabilities used to strip
+    // fastMode: false, which meant deepMerge could never clear a previous true.
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "high",
+          fastMode: false,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("fastMode", false);
+  });
+
+  it("preserves explicit thinking: true so deepMerge can overwrite a prior false", () => {
+    // Regression: thinking: true (the default) used to be stripped, which
+    // meant deepMerge could never clear a previous thinking: false.
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-haiku-4-5",
+      models: CLAUDE_MODELS,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          thinking: true,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("thinking", true);
+  });
+
+  it("preserves Claude default context window explicitly in dispatch options", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS_WITH_CONTEXT_WINDOW,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "high",
+          contextWindow: "200k",
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toMatchObject({
+      effort: "high",
+      contextWindow: "200k",
+    });
+  });
+
+  it("preserves explicit contextWindow default so deepMerge can overwrite a prior 1m", () => {
+    // Regression: the default contextWindow must survive normalization so
+    // deepMerge can clear an older non-default 1m selection.
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS_WITH_CONTEXT_WINDOW,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          contextWindow: "200k",
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("contextWindow", "200k");
+  });
+
+  it("omits contextWindow when the model does not support it", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-haiku-4-5",
+      models: CLAUDE_MODELS_WITH_CONTEXT_WINDOW,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          contextWindow: "1m",
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  it("omits fastMode when the model does not support it", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      models: CLAUDE_MODELS,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "high",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).not.toHaveProperty("fastMode");
+  });
+});
+
+describe("provider traits render guards", () => {
+  it("returns null for codex traits picker when no thread target is provided", () => {
+    const content = renderProviderTraitsPicker({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+    });
+
+    expect(content).toBeNull();
+  });
+
+  it("returns null for claude traits menu content when no thread target is provided", () => {
+    const content = renderProviderTraitsMenuContent({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      models: CLAUDE_MODELS,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+    });
+
+    expect(content).toBeNull();
+  });
 });
 
 describe("getComposerProviderControls", () => {

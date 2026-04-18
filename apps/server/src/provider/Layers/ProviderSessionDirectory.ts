@@ -24,15 +24,14 @@ function decodeProviderKind(
   providerName: string,
   operation: string,
 ): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  return Schema.decodeUnknownEffect(ProviderKind)(providerName).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ProviderSessionDirectoryPersistenceError({
-          operation,
-          detail: `Unknown persisted provider '${providerName}'.`,
-          cause,
-        }),
-    ),
+  if (Schema.is(ProviderKind)(providerName)) {
+    return Effect.succeed(providerName);
+  }
+  return Effect.fail(
+    new ProviderSessionDirectoryPersistenceError({
+      operation,
+      detail: `Unknown persisted provider '${providerName}'.`,
+    }),
   );
 }
 
@@ -146,6 +145,13 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
+  const remove: ProviderSessionDirectoryShape["remove"] = (threadId) =>
+    repository
+      .deleteByThreadId({ threadId })
+      .pipe(
+        Effect.mapError(toPersistenceError("ProviderSessionDirectory.remove:deleteByThreadId")),
+      );
+
   const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listThreadIds:list")),
@@ -168,6 +174,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     upsert,
     getProvider,
     getBinding,
+    remove,
     listThreadIds,
     listBindings,
   } satisfies ProviderSessionDirectoryShape;

@@ -571,11 +571,13 @@ function normalizeProviderModelOptions(
   const isCodexReasoningEffort = Schema.is(CodexReasoningEffort);
   const isClaudeAgentEffort = Schema.is(ClaudeAgentEffort);
 
-  const codexReasoningEffort = isCodexReasoningEffort(codexCandidate?.reasoningEffort)
-    ? codexCandidate.reasoningEffort
+  const codexCandidateReasoningEffort = codexCandidate?.reasoningEffort;
+  const legacyEffort = legacy?.effort;
+  const codexReasoningEffort = isCodexReasoningEffort(codexCandidateReasoningEffort)
+    ? codexCandidateReasoningEffort
     : provider === "codex"
-      ? isCodexReasoningEffort(legacy?.effort)
-        ? legacy.effort
+      ? isCodexReasoningEffort(legacyEffort)
+        ? legacyEffort
         : undefined
       : undefined;
   const codexFastMode =
@@ -595,17 +597,16 @@ function normalizeProviderModelOptions(
         }
       : undefined;
 
-  const copilotReasoningEffort = isCodexReasoningEffort(copilotCandidate?.reasoningEffort)
-    ? copilotCandidate.reasoningEffort
+  const copilotCandidateReasoningEffort = copilotCandidate?.reasoningEffort;
+  const copilotReasoningEffort = isCodexReasoningEffort(copilotCandidateReasoningEffort)
+    ? copilotCandidateReasoningEffort
     : provider === "copilot"
-      ? isCodexReasoningEffort(legacy?.effort)
-        ? legacy.effort
+      ? isCodexReasoningEffort(legacyEffort)
+        ? legacyEffort
         : undefined
       : undefined;
   const copilot: CopilotModelOptions | undefined =
-    copilotReasoningEffort !== undefined
-      ? { reasoningEffort: copilotReasoningEffort }
-      : undefined;
+    copilotReasoningEffort !== undefined ? { reasoningEffort: copilotReasoningEffort } : undefined;
 
   const claudeThinking =
     claudeCandidate?.thinking === true
@@ -613,8 +614,9 @@ function normalizeProviderModelOptions(
       : claudeCandidate?.thinking === false
         ? false
         : undefined;
-  const claudeEffort = isClaudeAgentEffort(claudeCandidate?.effort)
-    ? claudeCandidate.effort
+  const claudeCandidateEffort = claudeCandidate?.effort;
+  const claudeEffort = isClaudeAgentEffort(claudeCandidateEffort)
+    ? claudeCandidateEffort
     : undefined;
   const claudeFastMode =
     claudeCandidate?.fastMode === true
@@ -2334,7 +2336,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = { ...base.modelSelectionByProvider };
-            for (const provider of ["codex", "copilot", "claudeAgent", "cursor", "opencode"] as const) {
+            for (const provider of [
+              "codex",
+              "copilot",
+              "claudeAgent",
+              "cursor",
+              "opencode",
+            ] as const) {
               // Only touch providers explicitly present in the input
               if (!normalizedOpts || !(provider in normalizedOpts)) continue;
               const opts = normalizedOpts[provider];

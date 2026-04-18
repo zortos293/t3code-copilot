@@ -40,10 +40,17 @@ import {
   ThreadId,
   TurnId,
   type UserInputQuestion,
-  ClaudeAgentEffort,
+  type ClaudeAgentEffort,
 } from "@t3tools/contracts";
-import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@t3tools/shared/model";
 import {
+  applyClaudePromptEffortPrefix,
+  normalizeModelSlug,
+  resolveApiModelId,
+  resolveEffort,
+  trimOrNull,
+} from "@t3tools/shared/model";
+import {
+  Option,
   Cause,
   DateTime,
   Deferred,
@@ -57,11 +64,11 @@ import {
   Ref,
   Stream,
 } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { getClaudeModelCapabilities, resolveClaudeApiModelId } from "./ClaudeProvider.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -72,6 +79,12 @@ import {
 } from "../Errors.ts";
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { getClaudeModelCapabilities, resolveClaudeModelForVersion } from "./ClaudeProvider.ts";
+import {
+  DEFAULT_TIMEOUT_MS,
+  parseGenericCliVersion,
+  spawnAndCollect,
+} from "../providerSnapshot.ts";
 
 const PROVIDER = "claudeAgent" as const;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
@@ -143,6 +156,8 @@ interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
+  readonly claudeBinaryPath: string;
+  installedClaudeVersion: string | null;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
@@ -176,6 +191,7 @@ export interface ClaudeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly resolveCliVersion?: (binaryPath: string) => Effect.Effect<string | null>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -958,6 +974,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig;
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -976,6 +993,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         prompt: input.prompt,
         options: input.options,
       }) as ClaudeQueryRuntime);
+  const resolveCliVersion =
+    options?.resolveCliVersion ??
+    ((binaryPath: string) =>
+      resolveClaudeCliVersionEffect(binaryPath).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      ));
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -2436,7 +2459,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    sessions.delete(context.session.threadId);
+    if (sessions.get(context.session.threadId) === context) {
+      sessions.delete(context.session.threadId);
+    }
   });
 
   const requireSession = (
@@ -2479,18 +2504,6 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           existingSessionStatus: existingContext.session.status,
           reason: "startSession called with existing active session",
         });
-        yield* stopSessionInternal(existingContext, {
-          emitExitEvent: false,
-        }).pipe(
-          // Replacement cleanup is best-effort: never block the new session on
-          // either typed failures or unexpected defects from tearing down the old one.
-          Effect.catchCause((cause) =>
-            Effect.logWarning("claude.session.replace.stop-failed", {
-              threadId: input.threadId,
-              cause,
-            }),
-          ),
-        );
       }
 
       const startedAt = yield* nowIso;
@@ -2823,8 +2836,23 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
-      const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
+      const installedClaudeVersion = yield* resolveCliVersion(claudeBinaryPath);
+      const normalizedModel = yield* validateClaudeSelectedModel({
+        model: modelSelection?.model,
+        installedVersion: installedClaudeVersion,
+        operation: "startSession",
+      });
+      const resolvedModelSelection =
+        modelSelection && normalizedModel.model
+          ? {
+              ...modelSelection,
+              model: normalizedModel.model,
+            }
+          : modelSelection;
+      const caps = getClaudeModelCapabilities(resolvedModelSelection?.model);
+      const apiModelId = resolvedModelSelection
+        ? resolveApiModelId(resolvedModelSelection)
+        : undefined;
       const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
         null) as ClaudeAgentEffort | null;
       const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
@@ -2848,13 +2876,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
-        // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
-        // the published `Options["effort"]` union currently stops at `max`.
-        ...(effectiveEffort
-          ? {
-              effort: effectiveEffort as unknown as NonNullable<ClaudeQueryOptions["effort"]>,
-            }
-          : {}),
+        ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
@@ -2890,7 +2912,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
-        ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+        ...(resolvedModelSelection?.model ? { model: resolvedModelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
         resumeCursor: {
           ...(threadId ? { threadId } : {}),
@@ -2906,6 +2928,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         session,
         promptQueue,
         query: queryRuntime,
+        claudeBinaryPath,
+        installedClaudeVersion,
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,
@@ -2924,6 +2948,18 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       yield* Ref.set(contextRef, context);
       sessions.set(threadId, context);
+      if (existingContext) {
+        yield* stopSessionInternal(existingContext, {
+          emitExitEvent: false,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.session.replace.stop-failed", {
+              threadId,
+              cause,
+            }),
+          ),
+        );
+      }
 
       const sessionStartedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -2999,6 +3035,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const context = yield* requireSession(input.threadId);
     const modelSelection =
       input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+    const requestedModel =
+      normalizeModelSlug(modelSelection?.model, "claudeAgent") ?? modelSelection?.model?.trim();
 
     if (context.turnState) {
       // Auto-close a stale synthetic turn (from background agent responses
@@ -3006,8 +3044,28 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    if (modelSelection?.model) {
-      const apiModelId = resolveClaudeApiModelId(modelSelection);
+    const installedClaudeVersion =
+      requestedModel === "claude-opus-4-7"
+        ? yield* resolveCliVersion(context.claudeBinaryPath).pipe(
+            Effect.tap((version) =>
+              Effect.sync(() => void (context.installedClaudeVersion = version)),
+            ),
+          )
+        : context.installedClaudeVersion;
+    const normalizedModel = yield* validateClaudeSelectedModel({
+      model: modelSelection?.model,
+      installedVersion: installedClaudeVersion,
+      operation: "sendTurn",
+    });
+    const resolvedModelSelection =
+      modelSelection && normalizedModel.model
+        ? {
+            ...modelSelection,
+            model: normalizedModel.model,
+          }
+        : modelSelection;
+    if (resolvedModelSelection?.model) {
+      const apiModelId = resolveApiModelId(resolvedModelSelection);
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
@@ -3017,7 +3075,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       context.session = {
         ...context.session,
-        model: modelSelection.model,
+        model: resolvedModelSelection.model,
       };
     }
 
@@ -3065,7 +3123,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       createdAt: turnStartedStamp.createdAt,
       threadId: context.session.threadId,
       turnId,
-      payload: modelSelection?.model ? { model: modelSelection.model } : {},
+      payload: resolvedModelSelection?.model ? { model: resolvedModelSelection.model } : {},
       providerRefs: {},
     });
 
@@ -3214,4 +3272,67 @@ export const ClaudeAdapterLive = Layer.effect(ClaudeAdapter, makeClaudeAdapter()
 
 export function makeClaudeAdapterLive(options?: ClaudeAdapterLiveOptions) {
   return Layer.effect(ClaudeAdapter, makeClaudeAdapter(options));
+}
+function normalizeClaudeSelectedModel(input: {
+  readonly model: string | undefined;
+  readonly installedVersion: string | null | undefined;
+}): { readonly model: string | undefined; readonly downgradedFrom: string | undefined } {
+  const canonicalModel = normalizeModelSlug(input.model, "claudeAgent") ?? input.model?.trim();
+  const resolvedModel = resolveClaudeModelForVersion(canonicalModel, input.installedVersion);
+  return {
+    model: resolvedModel,
+    downgradedFrom:
+      canonicalModel === "claude-opus-4-7" && resolvedModel !== "claude-opus-4-7"
+        ? "claude-opus-4-7"
+        : undefined,
+  };
+}
+
+function validateClaudeSelectedModel(input: {
+  readonly model: string | undefined;
+  readonly installedVersion: string | null | undefined;
+  readonly operation: "startSession" | "sendTurn";
+}): Effect.Effect<
+  { readonly model: string | undefined; readonly downgradedFrom: string | undefined },
+  ProviderAdapterValidationError
+> {
+  const canonicalModel = normalizeModelSlug(input.model, "claudeAgent") ?? input.model?.trim();
+  if (canonicalModel === "claude-opus-4-7" && !input.installedVersion) {
+    return Effect.fail(
+      new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: input.operation,
+        issue:
+          "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+      }),
+    );
+  }
+
+  return Effect.succeed(
+    normalizeClaudeSelectedModel({
+      model: input.model,
+      installedVersion: input.installedVersion,
+    }),
+  );
+}
+
+function resolveClaudeCliVersionEffect(
+  binaryPath: string,
+): Effect.Effect<string | null, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const command = ChildProcess.make(binaryPath, ["--version"], {
+    shell: process.platform === "win32",
+  });
+  return spawnAndCollect(binaryPath, command).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.map((result) => {
+      if (!Option.isSome(result)) {
+        return null;
+      }
+      if (result.value.code !== 0) {
+        return null;
+      }
+      return parseGenericCliVersion(`${result.value.stdout}\n${result.value.stderr}`);
+    }),
+    Effect.orElseSucceed(() => null),
+  );
 }

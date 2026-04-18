@@ -173,6 +173,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const patchViewportRef = useRef<HTMLDivElement>(null);
+  const restoreSelectedFileScrollRef = useRef(false);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
@@ -325,11 +326,47 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     if (!selectedFilePath || !patchViewportRef.current) {
       return;
     }
+    if (!restoreSelectedFileScrollRef.current) {
+      restoreSelectedFileScrollRef.current = true;
+    }
     const target = Array.from(
       patchViewportRef.current.querySelectorAll<HTMLElement>("[data-diff-file-path]"),
     ).find((element) => element.dataset.diffFilePath === selectedFilePath);
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles]);
+
+  useEffect(() => {
+    if (!selectedFilePath || !patchViewportRef.current || !restoreSelectedFileScrollRef.current) {
+      return;
+    }
+    const viewport = patchViewportRef.current;
+    let frameId: number | null = null;
+    const restoreScroll = () => {
+      frameId = null;
+      const target = Array.from(
+        viewport.querySelectorAll<HTMLElement>("[data-diff-file-path]"),
+      ).find((element) => element.dataset.diffFilePath === selectedFilePath);
+      target?.scrollIntoView({ block: "nearest" });
+    };
+    const queueRestoreScroll = () => {
+      if (frameId !== null) {
+        return;
+      }
+      frameId = window.requestAnimationFrame(restoreScroll);
+    };
+    const observer = new MutationObserver(queueRestoreScroll);
+    observer.observe(viewport, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+    return () => {
+      observer.disconnect();
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [selectedFilePath]);
 
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {

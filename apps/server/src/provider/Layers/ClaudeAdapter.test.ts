@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -134,6 +134,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
+  readonly resolveCliVersion?: ClaudeAdapterLiveOptions["resolveCliVersion"];
   readonly cwd?: string;
   readonly baseDir?: string;
 }) {
@@ -150,6 +151,11 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.resolveCliVersion
+      ? {
+          resolveCliVersion: config.resolveCliVersion,
+        }
+      : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -352,7 +358,9 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("maps the Claude Opus 4.7 default effort to the SDK-supported max value", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.111"),
+    });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -374,7 +382,9 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("maps xhigh effort for Claude Opus 4.7 to the SDK-supported max value", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.111"),
+    });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -392,6 +402,283 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "max");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("downgrades Claude Opus 4.7 to Opus 4.6 when the installed CLI is too old", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.110"),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-opus-4-6");
+      assert.equal(session.model, "claude-opus-4-6");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "fails explicitly when Claude Opus 4.7 support cannot be verified at session start",
+    () => {
+      const harness = makeHarness({
+        resolveCliVersion: () => Effect.succeed(null),
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const result = yield* adapter
+          .startSession({
+            threadId: THREAD_ID,
+            provider: "claudeAgent",
+            modelSelection: {
+              provider: "claudeAgent",
+              model: "claude-opus-4-7",
+            },
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") {
+          return;
+        }
+        assert.deepEqual(
+          result.failure,
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "startSession",
+            issue:
+              "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+          }),
+        );
+        assert.equal(harness.getLastCreateQueryInput(), undefined);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("rejects Claude Opus 4.7 aliases when CLI version is unknown at session start", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed(null),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      for (const model of ["opus", "opus-4.7", "claude-opus-4.7"] as const) {
+        const result = yield* adapter
+          .startSession({
+            threadId: ThreadId.make(`${THREAD_ID}-${model}`),
+            provider: "claudeAgent",
+            modelSelection: {
+              provider: "claudeAgent",
+              model,
+            },
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") {
+          continue;
+        }
+        assert.deepEqual(
+          result.failure,
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "startSession",
+            issue:
+              "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+          }),
+        );
+      }
+      assert.equal(harness.getLastCreateQueryInput(), undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("downgrades in-turn Claude Opus 4.7 switches when the installed CLI is too old", () => {
+    let resolveCliVersionCalls = 0;
+    const harness = makeHarness({
+      resolveCliVersion: () => {
+        resolveCliVersionCalls += 1;
+        return Effect.succeed("2.1.110");
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+        },
+      });
+
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+      assert.equal(resolveCliVersionCalls, 2);
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions[0]?.model, "claude-opus-4-6");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "refreshes the cached Claude CLI version only when Claude Opus 4.7 is requested",
+    () => {
+      let resolveCliVersionCalls = 0;
+      const harness = makeHarness({
+        resolveCliVersion: () => {
+          resolveCliVersionCalls += 1;
+          return Effect.succeed(resolveCliVersionCalls === 1 ? "2.1.110" : "2.1.111");
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "use default model",
+          attachments: [],
+        });
+        assert.equal(resolveCliVersionCalls, 1);
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "switch to opus",
+          attachments: [],
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+        });
+
+        assert.equal(resolveCliVersionCalls, 2);
+        assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-7"]);
+        assert.equal((yield* adapter.listSessions())[0]?.model, "claude-opus-4-7");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("fails explicitly when in-turn Claude Opus 4.7 support cannot be verified", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed(null),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.deepEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: "claudeAgent",
+          operation: "sendTurn",
+          issue:
+            "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+        }),
+      );
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects Claude Opus 4.7 aliases when CLI version is unknown in-turn", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed(null),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      for (const model of ["opus", "opus-4.7", "claude-opus-4.7"] as const) {
+        const result = yield* adapter
+          .sendTurn({
+            threadId: THREAD_ID,
+            input: "hello",
+            attachments: [],
+            modelSelection: {
+              provider: "claudeAgent",
+              model,
+            },
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") {
+          continue;
+        }
+        assert.deepEqual(
+          result.failure,
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "sendTurn",
+            issue:
+              "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+          }),
+        );
+      }
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1307,7 +1594,74 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("closes the previous session before replacing an existing thread session", () => {
+  it.effect("keeps the current session alive when replacement validation fails", () => {
+    const queries: FakeClaudeQuery[] = [];
+    let resolveCliVersionCalls = 0;
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        queries.push(query);
+        return query;
+      },
+      resolveCliVersion: () => {
+        resolveCliVersionCalls += 1;
+        return Effect.succeed(resolveCliVersionCalls === 1 ? "2.1.111" : null);
+      },
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const firstSession = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+          resumeCursor: firstSession.resumeCursor,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.deepEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: "claudeAgent",
+          operation: "startSession",
+          issue:
+            "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+        }),
+      );
+
+      const activeSessions = yield* adapter.listSessions();
+      assert.equal(queries.length, 1);
+      assert.equal(queries[0]?.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      assert.equal(activeSessions.length, 1);
+      assert.deepEqual(activeSessions[0]?.resumeCursor, firstSession.resumeCursor);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("closes the previous session only after replacing an existing thread session", () => {
     const queries: FakeClaudeQuery[] = [];
     const layer = makeClaudeAdapterLive({
       createQuery: () => {
@@ -1367,6 +1721,74 @@ describe("ClaudeAdapterLive", () => {
         false,
       );
     }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("does not trust version output from failing Claude CLI probes", () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), "t3-claude-version-probe-"));
+    const fakeBinaryPath = path.join(
+      tempRoot,
+      process.platform === "win32" ? "claude.cmd" : "claude",
+    );
+    if (process.platform === "win32") {
+      writeFileSync(fakeBinaryPath, "@echo off\r\necho claude 2.1.111 1>&2\r\nexit /b 1\r\n");
+    } else {
+      writeFileSync(
+        fakeBinaryPath,
+        "#!/usr/bin/env sh\n" + "echo 'claude 2.1.111' >&2\n" + "exit 1\n",
+      );
+      chmodSync(fakeBinaryPath, 0o755);
+    }
+
+    const layer = makeClaudeAdapterLive().pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          providers: {
+            claudeAgent: {
+              binaryPath: fakeBinaryPath,
+            },
+          },
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.deepEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: "claudeAgent",
+          operation: "startSession",
+          issue:
+            "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+        }),
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(tempRoot, { recursive: true, force: true });
+        }),
+      ),
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),
     );

@@ -223,8 +223,9 @@ export function resolveAppModelSelectionState(
   };
   const resolvedRequestedProvider =
     allowedProviders && !allowedProviders.includes(selection.provider)
-      ? (allowedProviders.find((provider) =>
-          providers.find((candidate) => candidate.provider === provider)?.enabled ?? true,
+      ? (allowedProviders.find(
+          (provider) =>
+            providers.find((candidate) => candidate.provider === provider)?.enabled ?? true,
         ) ??
         allowedProviders[0] ??
         GIT_TEXT_GENERATION_PROVIDERS[0])

@@ -437,6 +437,7 @@ export interface CodexAppServerManagerEvents {
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly pendingSessions = new Map<ThreadId, CodexSessionContext>();
 
   private runPromise: (effect: Effect.Effect<unknown, never>) => Promise<unknown>;
   constructor(services?: Context.Context<never>) {
@@ -448,6 +449,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
+    const existingContext = this.sessions.get(threadId);
+    const existingPendingContext = this.pendingSessions.get(threadId);
 
     try {
       const existingContext = this.sessions.get(threadId);
@@ -517,7 +520,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         stopping: false,
       };
 
-      this.sessions.set(threadId, context);
+      this.pendingSessions.set(threadId, context);
       this.attachProcessListeners(context);
 
       this.emitLifecycleEvent(context, "session/connecting", "Starting codex app-server");
@@ -639,6 +642,23 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         "session/threadOpenResolved",
         `Codex ${threadOpenMethod} resolved.`,
       );
+      this.sessions.set(threadId, context);
+      if (this.pendingSessions.get(threadId) === context) {
+        this.pendingSessions.delete(threadId);
+      }
+      if (existingContext) {
+        try {
+          this.disposeSession(existingContext, {
+            emitLifecycleEvent: false,
+          });
+        } catch (error) {
+          await Effect.logWarning("codex app-server failed to dispose existing session", {
+            threadId,
+            existingStatus: existingContext.session.status,
+            cause: error instanceof Error ? error.message : String(error),
+          }).pipe(this.runPromise);
+        }
+      }
       await Effect.logInfo("codex app-server thread open resolved", {
         threadId,
         threadOpenMethod,
@@ -651,12 +671,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start Codex session.";
       if (context) {
+        if (this.pendingSessions.get(threadId) === context) {
+          this.pendingSessions.delete(threadId);
+        }
         this.updateSession(context, {
           status: "error",
           lastError: message,
         });
         this.emitErrorEvent(context, "session/startFailed", message);
-        this.stopSession(threadId);
+        this.disposeSession(context, {
+          emitLifecycleEvent: false,
+        });
       } else {
         this.emitEvent({
           id: EventId.make(randomUUID()),
@@ -915,14 +940,22 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   stopSession(threadId: ThreadId): void {
-    const context = this.sessions.get(threadId);
-    if (!context) {
+    const pendingContext = this.pendingSessions.get(threadId);
+    const activeContext = this.sessions.get(threadId);
+    if (!pendingContext && !activeContext) {
       return;
     }
 
-    this.disposeSession(context, {
-      emitLifecycleEvent: true,
-    });
+    if (pendingContext) {
+      this.disposeSession(pendingContext, {
+        emitLifecycleEvent: true,
+      });
+    }
+    if (activeContext && activeContext !== pendingContext) {
+      this.disposeSession(activeContext, {
+        emitLifecycleEvent: true,
+      });
+    }
   }
 
   private disposeSession(
@@ -970,7 +1003,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   stopAll(): void {
-    for (const threadId of this.sessions.keys()) {
+    const threadIds = new Set<ThreadId>([...this.sessions.keys(), ...this.pendingSessions.keys()]);
+    for (const threadId of threadIds) {
       this.stopSession(threadId);
     }
   }
@@ -1027,7 +1061,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         lastError: code === 0 ? context.session.lastError : message,
       });
       this.emitLifecycleEvent(context, "session/exited", message);
-      this.sessions.delete(context.session.threadId);
+      if (this.sessions.get(context.session.threadId) === context) {
+        this.sessions.delete(context.session.threadId);
+      }
+      if (this.pendingSessions.get(context.session.threadId) === context) {
+        this.pendingSessions.delete(context.session.threadId);
+      }
     });
   }
 

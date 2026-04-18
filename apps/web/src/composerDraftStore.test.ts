@@ -1005,7 +1005,10 @@ describe("composerDraftStore modelSelection", () => {
   it("keeps explicit Copilot reasoning overrides on the selection", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setModelSelection(threadRef, modelSelection("copilot", "gpt-5", { reasoningEffort: "high" }));
+    store.setModelSelection(
+      threadRef,
+      modelSelection("copilot", "gpt-5", { reasoningEffort: "high" }),
+    );
 
     store.setProviderModelOptions(threadRef, "copilot", {
       reasoningEffort: "medium",

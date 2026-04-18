@@ -1909,7 +1909,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "keybindingsUpdated",
         payload: { issues: [] },
       });
-      assert.deepEqual(refreshCalls.sort(), [
+      assert.deepEqual(refreshCalls.toSorted(), [
         "claudeAgent",
         "codex",
         "copilot",

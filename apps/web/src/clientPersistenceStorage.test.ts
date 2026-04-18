@@ -97,9 +97,8 @@ describe("clientPersistenceStorage", () => {
       }),
     );
 
-    const { CLIENT_SETTINGS_STORAGE_KEY, readBrowserClientSettings } = await import(
-      "./clientPersistenceStorage"
-    );
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
 
     expect(readBrowserClientSettings()).toEqual({
       ...DEFAULT_CLIENT_SETTINGS,

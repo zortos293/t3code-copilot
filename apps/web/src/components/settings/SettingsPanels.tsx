@@ -1598,9 +1598,9 @@ export function GeneralSettingsPanel() {
                               ? "gpt-6.7-codex-ultra-preview"
                               : providerCard.provider === "copilot"
                                 ? "gpt-5"
-                              : providerCard.provider === "opencode"
-                                ? "openai/gpt-5"
-                                : "claude-sonnet-5-0"
+                                : providerCard.provider === "opencode"
+                                  ? "openai/gpt-5"
+                                  : "claude-sonnet-5-0"
                           }
                           spellCheck={false}
                         />

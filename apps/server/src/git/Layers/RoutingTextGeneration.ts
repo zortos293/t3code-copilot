@@ -67,11 +67,14 @@ export const normalizeTextGenerationModelSelection = (
   }
 
   if (modelSelection.provider === "copilot") {
-    return createModelSelection("codex", DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex, {
-      ...(modelSelection.options?.reasoningEffort
-        ? { reasoningEffort: modelSelection.options.reasoningEffort }
-        : {}),
-    });
+    const options = modelSelection.options?.reasoningEffort
+      ? { reasoningEffort: modelSelection.options.reasoningEffort }
+      : undefined;
+    return createModelSelection(
+      "codex",
+      DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
+      options,
+    );
   }
 
   return createModelSelection(provider, DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider]);

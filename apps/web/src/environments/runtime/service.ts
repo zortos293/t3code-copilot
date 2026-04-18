@@ -61,7 +61,10 @@ import { useTerminalStateStore } from "~/terminalStateStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
-import { deriveLogicalProjectKeyFromSettings, derivePhysicalProjectKey } from "../../logicalProject";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+} from "../../logicalProject";
 import { getClientSettingsSnapshot } from "../../hooks/useSettings";
 
 type EnvironmentServiceState = {

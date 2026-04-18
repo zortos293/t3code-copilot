@@ -18,6 +18,7 @@ function Input({
   nativeInput = false,
   ...props
 }: InputProps) {
+  const { style, ...inputProps } = props;
   const inputClassName = cn(
     "h-8.5 w-full min-w-0 rounded-[inherit] px-[calc(--spacing(3)-1px)] leading-8.5 outline-none placeholder:text-muted-foreground/72 sm:h-7.5 sm:leading-7.5 [transition:background-color_5000000s_ease-in-out_0s]",
     size === "sm" && "h-7.5 px-[calc(--spacing(2.5)-1px)] leading-7.5 sm:h-6.5 sm:leading-6.5",
@@ -45,14 +46,27 @@ function Input({
           className={inputClassName}
           data-slot="input"
           size={typeof size === "number" ? size : undefined}
-          {...props}
+          style={
+            typeof style === "function"
+              ? style({
+                  disabled: false,
+                  valid: true,
+                  touched: false,
+                  dirty: false,
+                  filled: false,
+                  focused: false,
+                })
+              : style
+          }
+          {...inputProps}
         />
       ) : (
         <InputPrimitive
           className={inputClassName}
           data-slot="input"
           size={typeof size === "number" ? size : undefined}
-          {...props}
+          style={style}
+          {...inputProps}
         />
       )}
     </span>
