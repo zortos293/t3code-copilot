@@ -2,6 +2,10 @@
 
 T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
 
+
+# This fork has been archived
+I archived this because you can now use copilot inside of opencode, so this is not needed anymore. And due to the recent plan changes, it's not worth it. 
+
 ## Installation
 
 > [!WARNING]
